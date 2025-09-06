@@ -1,0 +1,27 @@
+# Small JSON responses (good for cache hit/miss testing)
+https://httpbin.org/json
+https://jsonplaceholder.typicode.com/posts/1
+https://httpbin.org/user-agent
+https://httpbin.org/headers
+
+# Medium sized responses
+https://jsonplaceholder.typicode.com/posts
+https://httpbin.org/uuid
+
+# Responses with artificial delays (good for concurrency testing)
+https://httpbin.org/delay/1
+https://httpbin.org/delay/2
+https://httpbin.org/delay/3
+
+# Different content types
+https://httpbin.org/xml
+https://httpbin.org/html
+https://httpbin.org/robots.txt
+
+# Large responses (testing performance with bigger payloads)
+https://jsonplaceholder.typicode.com/photos
+https://httpbin.org/base64/SFRUUEJJTiBpcyBhd2Vzb21l
+
+# Dynamic responses (different each time)
+https://httpbin.org/uuid
+https://httpbin.org/ip
