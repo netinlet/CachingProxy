@@ -233,9 +233,6 @@ public class CachingProxy : IAsyncDisposable
     private async Task<ProxyResponse> DownloadAndCacheAsync(string url, string cacheFilePath,
         CancellationToken cancellationToken)
     {
-        if (_disposed)
-            throw new ObjectDisposedException(nameof(CachingProxy));
-
         // Acquire semaphore to limit concurrent downloads
         await _cacheSemaphore.WaitAsync(cancellationToken);
 
@@ -426,5 +423,53 @@ public class CachingProxy : IAsyncDisposable
         _inProgressRequests.Clear();
 
         _logger.LogInformation("CachingProxy disposed");
+    }
+
+    public Task<(int FilesDeleted, int ErrorsEncountered)> ClearCacheAsync()
+    {
+        _logger.LogInformation("Starting cache clear operation");
+
+        var filesDeleted = 0;
+        var errorsEncountered = 0;
+
+        try
+        {
+            if (!Directory.Exists(_cacheDirectory))
+            {
+                _logger.LogInformation("Cache directory does not exist, nothing to clear");
+                return Task.FromResult((0, 0));
+            }
+
+            var cacheFiles = Directory.GetFiles(_cacheDirectory, "*", SearchOption.AllDirectories);
+            _logger.LogInformation("Found {FileCount} files to delete", cacheFiles.Length);
+
+            foreach (var file in cacheFiles)
+            {
+                try
+                {
+                    File.Delete(file);
+                    filesDeleted++;
+                    _logger.LogDebug("Deleted cache file: {FilePath}", Path.GetFileName(file));
+                }
+                catch (Exception ex)
+                {
+                    errorsEncountered++;
+                    _logger.LogWarning(ex, "Failed to delete cache file: {FilePath}", file);
+                }
+            }
+
+            // Also clear any in-progress requests since cache is being flushed
+            _inProgressRequests.Clear();
+
+            _logger.LogInformation("Cache clear completed: {FilesDeleted} files deleted, {ErrorsEncountered} errors encountered", 
+                filesDeleted, errorsEncountered);
+
+            return Task.FromResult((filesDeleted, errorsEncountered));
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Failed to clear cache directory");
+            throw;
+        }
     }
 }

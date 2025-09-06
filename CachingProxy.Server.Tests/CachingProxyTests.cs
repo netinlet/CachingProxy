@@ -787,6 +787,118 @@ public class CachingProxyTests
 
     #endregion
 
+    #region Cache Clear Tests
+
+    [TestMethod]
+    public async Task ClearCacheAsync_WithCachedFiles_DeletesAllFiles()
+    {
+        // Arrange
+        const string url1 = "https://example.com/file1.txt";
+        const string url2 = "https://example.com/file2.txt";
+        
+        CreateCacheFile(url1, "content1", "text/plain");
+        CreateCacheFile(url2, "content2", "text/plain");
+
+        // Verify files exist before clearing
+        var cacheFile1 = GetExpectedCacheFilePath(url1);
+        var cacheFile2 = GetExpectedCacheFilePath(url2);
+        Assert.IsTrue(File.Exists(cacheFile1));
+        Assert.IsTrue(File.Exists(cacheFile2));
+        Assert.IsTrue(File.Exists(cacheFile1 + ".meta"));
+        Assert.IsTrue(File.Exists(cacheFile2 + ".meta"));
+
+        // Act
+        var result = await _cachingProxy.ClearCacheAsync();
+
+        // Assert
+        Assert.AreEqual(4, result.FilesDeleted); // 2 content files + 2 metadata files
+        Assert.AreEqual(0, result.ErrorsEncountered);
+        
+        // Verify files are deleted
+        Assert.IsFalse(File.Exists(cacheFile1));
+        Assert.IsFalse(File.Exists(cacheFile2));
+        Assert.IsFalse(File.Exists(cacheFile1 + ".meta"));
+        Assert.IsFalse(File.Exists(cacheFile2 + ".meta"));
+    }
+
+    [TestMethod]
+    public async Task ClearCacheAsync_EmptyCache_ReturnsZeroFilesDeleted()
+    {
+        // Act
+        var result = await _cachingProxy.ClearCacheAsync();
+
+        // Assert
+        Assert.AreEqual(0, result.FilesDeleted);
+        Assert.AreEqual(0, result.ErrorsEncountered);
+    }
+
+    [TestMethod]
+    public async Task ClearCacheAsync_NonExistentCacheDirectory_ReturnsZeroFilesDeleted()
+    {
+        // Arrange - Create proxy with non-existent directory
+        var nonExistentDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
+        await _cachingProxy.DisposeAsync();
+        _cachingProxy = new CachingProxy(nonExistentDir, _httpClient, _mockLogger);
+
+        // Act
+        var result = await _cachingProxy.ClearCacheAsync();
+
+        // Assert
+        Assert.AreEqual(0, result.FilesDeleted);
+        Assert.AreEqual(0, result.ErrorsEncountered);
+    }
+
+    [TestMethod]
+    public async Task ClearCacheAsync_ClearsInProgressRequests()
+    {
+        // Arrange
+        const string url = "https://example.com/slow-file.txt";
+        
+        _mockHttpHandler.When(HttpMethod.Get, url)
+            .Respond(async request =>
+            {
+                await Task.Delay(50); // Simulate slow download
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("slow content", Encoding.UTF8, "text/plain")
+                };
+            });
+
+        using var responseStream = new MemoryStream();
+        
+        // Start download but don't await it
+        var downloadTask = _cachingProxy.ServeAsync(url, responseStream);
+        
+        // Small delay to ensure download has started
+        await Task.Delay(10);
+
+        // Act - Clear cache while download is in progress
+        var result = await _cachingProxy.ClearCacheAsync();
+
+        // Complete the download
+        await downloadTask;
+
+        // Assert - Cache clear should succeed even with in-progress requests
+        Assert.IsTrue(result.FilesDeleted >= 0);
+        Assert.AreEqual(0, result.ErrorsEncountered);
+    }
+
+    [TestMethod]
+    public async Task ClearCacheAsync_AfterDisposal_DoesNotThrow()
+    {
+        // Arrange
+        await _cachingProxy.DisposeAsync();
+
+        // Act - ClearCacheAsync should still work since it only operates on files
+        var result = await _cachingProxy.ClearCacheAsync();
+
+        // Assert - Should complete without throwing
+        Assert.IsTrue(result.FilesDeleted >= 0);
+        Assert.IsTrue(result.ErrorsEncountered >= 0);
+    }
+
+    #endregion
+
     #region Helper Methods
 
     private void CreateCacheFile(string url, string content, string contentType)

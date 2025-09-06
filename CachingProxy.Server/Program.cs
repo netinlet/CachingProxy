@@ -118,7 +118,27 @@ app.MapGet("/config", (IConfiguration config) =>
     };
 });
 
+// Clear cache endpoint
+app.MapPost("/clear", async (CachingProxy.Server.CachingProxy cachingProxy) =>
+{
+    try
+    {
+        var result = await cachingProxy.ClearCacheAsync();
+        return Results.Ok(new 
+        {
+            Success = true,
+            Message = "Cache cleared successfully",
+            FilesDeleted = result.FilesDeleted,
+            ErrorsEncountered = result.ErrorsEncountered
+        });
+    }
+    catch (Exception ex)
+    {
+        return Results.Problem($"Failed to clear cache: {ex.Message}", statusCode: 500);
+    }
+});
+
 // Info endpoint
-app.MapGet("/", () => "CachingProxy API - Use /proxy?url=<your-url> to cache and serve content");
+app.MapGet("/", () => "CachingProxy API - Use /proxy?url=<your-url> to cache and serve content. Use POST /clear to flush cache.");
 
 app.Run();
