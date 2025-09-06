@@ -1,3 +1,4 @@
+using System.Net;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -29,103 +30,120 @@ public class CachingProxy
             Directory.CreateDirectory(_cacheDirectory);
     }
 
-    public async Task<(bool Success, ProxyResponse Response, string? ErrorMessage)> ValidateAndPrepareAsync(string url, CancellationToken cancellationToken = default)
+    public async Task<(bool Success, ProxyResponse Response, string? ErrorMessage)> ValidateAndPrepareAsync(string url,
+        CancellationToken cancellationToken = default)
     {
         var cacheFilePath = GetCacheFilePath(url);
-        
+
         // If a cached file exists, return success with cached headers
         if (File.Exists(cacheFilePath))
         {
-            _logger.LogInformation("Cache HIT for URL: {Url} (file: {CacheFile})", url, Path.GetFileName(cacheFilePath));
-            
+            _logger.LogInformation("Cache HIT for URL: {Url} (file: {CacheFile})", url,
+                Path.GetFileName(cacheFilePath));
+
             var cachedHeaders = GetCachedHeaders(cacheFilePath);
             var fileInfo = new FileInfo(cacheFilePath);
             var response = new ProxyResponse(
                 cachedHeaders.GetValueOrDefault("Content-Type"),
                 fileInfo.Length,
                 cachedHeaders.GetValueOrDefault("ETag"),
-                cachedHeaders.ContainsKey("Last-Modified") && DateTimeOffset.TryParse(cachedHeaders["Last-Modified"], out var lastMod) ? lastMod : null,
+                cachedHeaders.ContainsKey("Last-Modified") &&
+                DateTimeOffset.TryParse(cachedHeaders["Last-Modified"], out var lastMod)
+                    ? lastMod
+                    : null,
                 cachedHeaders.GetValueOrDefault("Cache-Control"),
                 cachedHeaders.GetValueOrDefault("Content-Disposition"),
                 cachedHeaders
             );
-            
+
             _logger.LogDebug("Cache hit: {ContentType}, {Size} bytes", response.ContentType, response.ContentLength);
             return (true, response, null);
         }
-        
+
         // Test origin connectivity without downloading
         _logger.LogInformation("Cache MISS for URL: {Url} - fetching from origin", url);
-        
+
         try
         {
             using var headRequest = new HttpRequestMessage(HttpMethod.Head, url);
             using var headResponse = await _httpClient.SendAsync(headRequest, cancellationToken);
-            headResponse.EnsureSuccessStatusCode();
-            
+
+            // For caching proxy, 304 Not Modified is also considered success
+            if (!headResponse.IsSuccessStatusCode && headResponse.StatusCode != HttpStatusCode.NotModified)
+                throw new HttpRequestException(
+                    $"Response status code does not indicate success: {(int)headResponse.StatusCode} ({headResponse.ReasonPhrase}).");
+
             _logger.LogDebug("HEAD request successful for {Url}, Status: {Status}", url, headResponse.StatusCode);
-            
+
             // Prepare response metadata from HEAD request
             var headers = new Dictionary<string, string>();
             var contentType = headResponse.Content.Headers.ContentType?.ToString();
             var contentLength = headResponse.Content.Headers.ContentLength;
-            
+
             if (contentType != null) headers["Content-Type"] = contentType;
             if (headResponse.Headers.ETag != null) headers["ETag"] = headResponse.Headers.ETag.ToString();
-            if (headResponse.Content.Headers.LastModified.HasValue) headers["Last-Modified"] = headResponse.Content.Headers.LastModified.Value.ToString("R");
-            if (headResponse.Headers.CacheControl != null) headers["Cache-Control"] = headResponse.Headers.CacheControl.ToString();
-            if (headResponse.Content.Headers.ContentDisposition != null) headers["Content-Disposition"] = headResponse.Content.Headers.ContentDisposition.ToString();
-            
+            if (headResponse.Content.Headers.LastModified.HasValue)
+                headers["Last-Modified"] = headResponse.Content.Headers.LastModified.Value.ToString("R");
+            if (headResponse.Headers.CacheControl != null)
+                headers["Cache-Control"] = headResponse.Headers.CacheControl.ToString();
+            if (headResponse.Content.Headers.ContentDisposition != null)
+                headers["Content-Disposition"] = headResponse.Content.Headers.ContentDisposition.ToString();
+
             // Add other important headers
             foreach (var header in headResponse.Headers.Concat(headResponse.Content.Headers))
-            {
                 if (IsImportantHeader(header.Key) && !headers.ContainsKey(header.Key))
-                {
                     headers[header.Key] = string.Join(", ", header.Value);
-                }
-            }
-            
+
             var response = new ProxyResponse(
                 contentType,
                 contentLength,
                 headers.GetValueOrDefault("ETag"),
-                headers.ContainsKey("Last-Modified") && DateTimeOffset.TryParse(headers["Last-Modified"], out var lastMod2) ? lastMod2 : null,
+                headers.ContainsKey("Last-Modified") &&
+                DateTimeOffset.TryParse(headers["Last-Modified"], out var lastMod2)
+                    ? lastMod2
+                    : null,
                 headers.GetValueOrDefault("Cache-Control"),
                 headers.GetValueOrDefault("Content-Disposition"),
                 headers
             );
-            
+
             return (true, response, null);
         }
         catch (HttpRequestException ex)
         {
             _logger.LogError(ex, "HTTP request failed for URL: {Url}", url);
-            return (false, new ProxyResponse(null, null, null, null, null, null, new Dictionary<string, string>()), ex.Message);
+            return (false, new ProxyResponse(null, null, null, null, null, null, new Dictionary<string, string>()),
+                ex.Message);
         }
         catch (TaskCanceledException)
         {
             _logger.LogWarning("Request timeout for URL: {Url}", url);
-            return (false, new ProxyResponse(null, null, null, null, null, null, new Dictionary<string, string>()), "Request timeout");
+            return (false, new ProxyResponse(null, null, null, null, null, null, new Dictionary<string, string>()),
+                "Request timeout");
         }
     }
-    
-    public async Task<ProxyResponse> ServeAsync(string url, Stream responseStream, CancellationToken cancellationToken = default)
+
+    public async Task<ProxyResponse> ServeAsync(string url, Stream responseStream,
+        CancellationToken cancellationToken = default)
     {
         var cacheFilePath = GetCacheFilePath(url);
 
         // If cached file exists, serve it directly
         if (File.Exists(cacheFilePath))
         {
-            using var cachedFileStream = File.OpenRead(cacheFilePath);
+            await using var cachedFileStream = File.OpenRead(cacheFilePath);
             await cachedFileStream.CopyToAsync(responseStream, cancellationToken);
-            
+
             // Try to get cached headers from metadata file
             var cachedHeaders = GetCachedHeaders(cacheFilePath);
             return new ProxyResponse(
                 cachedHeaders.GetValueOrDefault("Content-Type"),
                 cachedFileStream.Length,
                 cachedHeaders.GetValueOrDefault("ETag"),
-                cachedHeaders.ContainsKey("Last-Modified") && DateTimeOffset.TryParse(cachedHeaders["Last-Modified"], out var lastMod) ? lastMod : null,
+                cachedHeaders.ContainsKey("Last-Modified") &&
+                DateTimeOffset.TryParse(cachedHeaders["Last-Modified"], out var lastMod)
+                    ? lastMod
+                    : null,
                 cachedHeaders.GetValueOrDefault("Cache-Control"),
                 cachedHeaders.GetValueOrDefault("Content-Disposition"),
                 cachedHeaders
@@ -139,46 +157,48 @@ public class CachingProxy
 
         // Collect relevant headers
         var headers = new Dictionary<string, string>();
-        
+
         var contentType = originResponse.Content.Headers.ContentType?.ToString();
         var contentLength = originResponse.Content.Headers.ContentLength;
-        
+
         if (contentType != null) headers["Content-Type"] = contentType;
         if (originResponse.Headers.ETag != null) headers["ETag"] = originResponse.Headers.ETag.ToString();
-        if (originResponse.Content.Headers.LastModified.HasValue) headers["Last-Modified"] = originResponse.Content.Headers.LastModified.Value.ToString("R");
-        if (originResponse.Headers.CacheControl != null) headers["Cache-Control"] = originResponse.Headers.CacheControl.ToString();
-        if (originResponse.Content.Headers.ContentDisposition != null) headers["Content-Disposition"] = originResponse.Content.Headers.ContentDisposition.ToString();
-        
+        if (originResponse.Content.Headers.LastModified.HasValue)
+            headers["Last-Modified"] = originResponse.Content.Headers.LastModified.Value.ToString("R");
+        if (originResponse.Headers.CacheControl != null)
+            headers["Cache-Control"] = originResponse.Headers.CacheControl.ToString();
+        if (originResponse.Content.Headers.ContentDisposition != null)
+            headers["Content-Disposition"] = originResponse.Content.Headers.ContentDisposition.ToString();
+
         // Add other important headers
         foreach (var header in originResponse.Headers.Concat(originResponse.Content.Headers))
-        {
             if (IsImportantHeader(header.Key) && !headers.ContainsKey(header.Key))
-            {
                 headers[header.Key] = string.Join(", ", header.Value);
-            }
-        }
 
-        using var originStream = await originResponse.Content.ReadAsStreamAsync();
-        using var cacheFileStream = File.Create(cacheFilePath);
-        using var teeStream = new TeeStream(responseStream, cacheFileStream);
+        await using var originStream = await originResponse.Content.ReadAsStreamAsync(cancellationToken);
+        await using var cacheFileStream = File.Create(cacheFilePath);
+        await using var teeStream = new TeeStream(responseStream, cacheFileStream);
 
         try
         {
             await originStream.CopyToAsync(teeStream, cancellationToken);
             await teeStream.FlushAsync(cancellationToken);
-            
+
             // Save headers metadata
             SaveHeadersMetadata(cacheFilePath, headers);
-            
+
             var fileSize = new FileInfo(cacheFilePath).Length;
-            _logger.LogInformation("Cached content for URL: {Url} ({Size} bytes, {ContentType})", 
+            _logger.LogInformation("Cached content for URL: {Url} ({Size} bytes, {ContentType})",
                 url, fileSize, contentType ?? "unknown");
-            
+
             return new ProxyResponse(
                 contentType,
                 contentLength,
                 headers.GetValueOrDefault("ETag"),
-                headers.ContainsKey("Last-Modified") && DateTimeOffset.TryParse(headers["Last-Modified"], out var lastMod) ? lastMod : null,
+                headers.ContainsKey("Last-Modified") &&
+                DateTimeOffset.TryParse(headers["Last-Modified"], out var lastMod)
+                    ? lastMod
+                    : null,
                 headers.GetValueOrDefault("Cache-Control"),
                 headers.GetValueOrDefault("Content-Disposition"),
                 headers
@@ -187,14 +207,14 @@ public class CachingProxy
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to cache content for URL: {Url}", url);
-            
+
             // If something goes wrong, clean up the partial cache file
             try
             {
                 if (File.Exists(cacheFilePath))
                     File.Delete(cacheFilePath);
                 CleanupMetadataFile(cacheFilePath);
-                
+
                 _logger.LogDebug("Cleaned up partial cache file for URL: {Url}", url);
             }
             catch (Exception cleanupEx)
@@ -222,7 +242,10 @@ public class CachingProxy
         return Path.Combine(_cacheDirectory, fileName);
     }
 
-    private string GetMetadataFilePath(string cacheFilePath) => cacheFilePath + ".meta";
+    private string GetMetadataFilePath(string cacheFilePath)
+    {
+        return cacheFilePath + ".meta";
+    }
 
     private void SaveHeadersMetadata(string cacheFilePath, Dictionary<string, string> headers)
     {
@@ -237,7 +260,7 @@ public class CachingProxy
     {
         var metadataPath = GetMetadataFilePath(cacheFilePath);
         if (!File.Exists(metadataPath)) return new Dictionary<string, string>();
-        
+
         try
         {
             var json = File.ReadAllText(metadataPath);
@@ -251,13 +274,15 @@ public class CachingProxy
         }
     }
 
-    private static bool IsImportantHeader(string headerName) =>
-        headerName.Equals("Accept-Ranges", StringComparison.OrdinalIgnoreCase) ||
-        headerName.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) ||
-        headerName.Equals("Content-Language", StringComparison.OrdinalIgnoreCase) ||
-        headerName.Equals("Expires", StringComparison.OrdinalIgnoreCase) ||
-        headerName.Equals("Vary", StringComparison.OrdinalIgnoreCase) ||
-        headerName.Equals("X-Content-Type-Options", StringComparison.OrdinalIgnoreCase);
+    private static bool IsImportantHeader(string headerName)
+    {
+        return headerName.Equals("Accept-Ranges", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Language", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Expires", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Vary", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("X-Content-Type-Options", StringComparison.OrdinalIgnoreCase);
+    }
 
     private void CleanupMetadataFile(string cacheFilePath)
     {
@@ -267,6 +292,9 @@ public class CachingProxy
             if (File.Exists(metadataPath))
                 File.Delete(metadataPath);
         }
-        catch { /* Best effort cleanup */ }
+        catch
+        {
+            /* Best effort cleanup */
+        }
     }
 }

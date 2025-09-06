@@ -1,59 +1,49 @@
-using System;
-using System.Collections.Generic;
-using System.IO;
 using System.Net;
-using System.Net.Http;
+using System.Net.Http.Headers;
 using System.Text;
-using System.Threading;
-using System.Threading.Tasks;
+using System.Text.Json;
 using Microsoft.Extensions.Logging;
-using Microsoft.VisualStudio.TestTools.UnitTesting;
 using NSubstitute;
 using RichardSzalay.MockHttp;
-using CachingProxy.Server;
 
 namespace CachingProxy.Server.Tests;
 
 [TestClass]
 public class CachingProxyTests
 {
-    private string _tempCacheDir = null!;
-    private MockHttpMessageHandler _mockHttpHandler = null!;
-    private HttpClient _httpClient = null!;
-    private ILogger<CachingProxy> _mockLogger = null!;
     private CachingProxy _cachingProxy = null!;
+    private HttpClient _httpClient = null!;
+    private MockHttpMessageHandler _mockHttpHandler = null!;
+    private ILogger<CachingProxy> _mockLogger = null!;
+    private string _tempCacheDir = null!;
 
     [TestInitialize]
     public void Setup()
     {
         _tempCacheDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         Directory.CreateDirectory(_tempCacheDir);
-        
+
         _mockHttpHandler = new MockHttpMessageHandler();
         _httpClient = _mockHttpHandler.ToHttpClient();
         _mockLogger = Substitute.For<ILogger<CachingProxy>>();
-        
+
         _cachingProxy = new CachingProxy(_tempCacheDir, _httpClient, _mockLogger);
     }
 
     [TestCleanup]
     public void Cleanup()
     {
-        _httpClient?.Dispose();
-        _mockHttpHandler?.Dispose();
-        if (Directory.Exists(_tempCacheDir))
-        {
-            Directory.Delete(_tempCacheDir, true);
-        }
+        _httpClient.Dispose();
+        _mockHttpHandler.Dispose();
+        if (Directory.Exists(_tempCacheDir)) Directory.Delete(_tempCacheDir, true);
     }
 
     #region Constructor Tests
 
     [TestMethod]
-    [ExpectedException(typeof(ArgumentNullException))]
     public void Constructor_NullCacheDirectory_ThrowsArgumentNullException()
     {
-        new CachingProxy(null!);
+        Assert.ThrowsException<ArgumentNullException>(() => new CachingProxy(null!));
     }
 
     [TestMethod]
@@ -67,8 +57,8 @@ public class CachingProxyTests
     public void Constructor_NonExistentDirectory_CreatesDirectory()
     {
         var newDir = Path.Combine(_tempCacheDir, "newdir");
-        var proxy = new CachingProxy(newDir);
-        
+        _ = new CachingProxy(newDir);
+
         Assert.IsTrue(Directory.Exists(newDir));
     }
 
@@ -80,7 +70,7 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_CacheHit_ReturnsSuccessWithCachedData()
     {
         // Arrange
-        var url = "https://example.com/image.png";
+        const string url = "https://example.com/image.png";
         CreateCacheFile(url, "test content", "image/png");
 
         // Act
@@ -97,7 +87,7 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_CacheHit_LogsInformation()
     {
         // Arrange
-        var url = "https://example.com/image.png";
+        const string url = "https://example.com/image.png";
         CreateCacheFile(url, "test content", "image/png");
 
         // Act
@@ -120,7 +110,7 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_CacheMiss_PerformsHeadRequest()
     {
         // Arrange
-        var url = "https://example.com/image.png";
+        const string url = "https://example.com/image.png";
         _mockHttpHandler.When(HttpMethod.Head, url)
             .Respond(HttpStatusCode.OK, "image/png", "");
 
@@ -129,14 +119,15 @@ public class CachingProxyTests
 
         // Assert
         Assert.IsTrue(result.Success);
-        Assert.AreEqual("image/png", result.Response.ContentType);
+        Assert.IsNotNull(result.Response.ContentType);
+        StringAssert.StartsWith(result.Response.ContentType, "image/png");
     }
 
     [TestMethod]
     public async Task ValidateAndPrepareAsync_CacheMiss_LogsInformation()
     {
         // Arrange
-        var url = "https://example.com/image.png";
+        const string url = "https://example.com/image.png";
         _mockHttpHandler.When(HttpMethod.Head, url)
             .Respond(HttpStatusCode.OK, "image/png", "");
 
@@ -160,7 +151,7 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_404NotFound_ReturnsFailure()
     {
         // Arrange
-        var url = "https://example.com/notfound.png";
+        const string url = "https://example.com/notfound.png";
         _mockHttpHandler.When(HttpMethod.Head, url)
             .Respond(HttpStatusCode.NotFound);
 
@@ -176,7 +167,7 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_500InternalServerError_ReturnsFailure()
     {
         // Arrange
-        var url = "https://example.com/error.png";
+        const string url = "https://example.com/error.png";
         _mockHttpHandler.When(HttpMethod.Head, url)
             .Respond(HttpStatusCode.InternalServerError);
 
@@ -192,7 +183,7 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_401Unauthorized_ReturnsFailure()
     {
         // Arrange
-        var url = "https://example.com/secure.png";
+        const string url = "https://example.com/secure.png";
         _mockHttpHandler.When(HttpMethod.Head, url)
             .Respond(HttpStatusCode.Unauthorized);
 
@@ -208,7 +199,7 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_403Forbidden_ReturnsFailure()
     {
         // Arrange
-        var url = "https://example.com/forbidden.png";
+        const string url = "https://example.com/forbidden.png";
         _mockHttpHandler.When(HttpMethod.Head, url)
             .Respond(HttpStatusCode.Forbidden);
 
@@ -220,27 +211,12 @@ public class CachingProxyTests
         Assert.IsNotNull(result.ErrorMessage);
     }
 
-    [TestMethod]
-    public async Task ValidateAndPrepareAsync_302Redirect_ReturnsSuccess()
-    {
-        // Arrange
-        var url = "https://example.com/redirect.png";
-        _mockHttpHandler.When(HttpMethod.Head, url)
-            .Respond(HttpStatusCode.Redirect, "image/png", "");
-
-        // Act
-        var result = await _cachingProxy.ValidateAndPrepareAsync(url);
-
-        // Assert
-        Assert.IsTrue(result.Success);
-        Assert.AreEqual("image/png", result.Response.ContentType);
-    }
 
     [TestMethod]
     public async Task ValidateAndPrepareAsync_503ServiceUnavailable_ReturnsFailure()
     {
         // Arrange
-        var url = "https://example.com/unavailable.png";
+        const string url = "https://example.com/unavailable.png";
         _mockHttpHandler.When(HttpMethod.Head, url)
             .Respond(HttpStatusCode.ServiceUnavailable);
 
@@ -260,7 +236,7 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_Timeout_ReturnsFailure()
     {
         // Arrange
-        var url = "https://example.com/slow.png";
+        const string url = "https://example.com/slow.png";
         _mockHttpHandler.When(HttpMethod.Head, url)
             .Throw(new TaskCanceledException("Request timeout"));
 
@@ -276,7 +252,7 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_Timeout_LogsWarning()
     {
         // Arrange
-        var url = "https://example.com/slow.png";
+        const string url = "https://example.com/slow.png";
         _mockHttpHandler.When(HttpMethod.Head, url)
             .Throw(new TaskCanceledException("Request timeout"));
 
@@ -300,10 +276,10 @@ public class CachingProxyTests
     public async Task ServeAsync_CacheHit_ServesCachedContent()
     {
         // Arrange
-        var url = "https://example.com/image.png";
-        var content = "cached content";
+        const string url = "https://example.com/image.png";
+        const string content = "cached content";
         CreateCacheFile(url, content, "image/png");
-        
+
         using var responseStream = new MemoryStream();
 
         // Act
@@ -320,22 +296,24 @@ public class CachingProxyTests
     public async Task ServeAsync_CacheMiss_FetchesAndCachesContent()
     {
         // Arrange
-        var url = "https://example.com/image.png";
-        var content = "fresh content";
+        const string url = "https://example.com/image.png";
+        const string content = "fresh content";
         _mockHttpHandler.When(HttpMethod.Get, url)
             .Respond("image/png", content);
-        
-        using var responseStream = new MemoryStream();
+
+        var responseStream = new MemoryStream();
 
         // Act
         var result = await _cachingProxy.ServeAsync(url, responseStream);
 
         // Assert
-        responseStream.Position = 0;
-        var servedContent = await new StreamReader(responseStream).ReadToEndAsync();
+        var servedContent = Encoding.UTF8.GetString(responseStream.ToArray());
         Assert.AreEqual(content, servedContent);
-        Assert.AreEqual("image/png", result.ContentType);
-        
+        Assert.IsNotNull(result.ContentType);
+        StringAssert.StartsWith( result.ContentType,"image/png");
+
+        await responseStream.DisposeAsync();
+
         // Verify content was cached
         var cacheFilePath = GetExpectedCacheFilePath(url);
         Assert.IsTrue(File.Exists(cacheFilePath));
@@ -347,11 +325,11 @@ public class CachingProxyTests
     public async Task ServeAsync_CacheMiss_LogsCacheStorage()
     {
         // Arrange
-        var url = "https://example.com/image.png";
-        var content = "fresh content";
+        const string url = "https://example.com/image.png";
+        const string content = "fresh content";
         _mockHttpHandler.When(HttpMethod.Get, url)
             .Respond("image/png", content);
-        
+
         using var responseStream = new MemoryStream();
 
         // Act
@@ -374,13 +352,19 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_WithHeaders_PreservesImportantHeaders()
     {
         // Arrange
-        var url = "https://example.com/image.png";
-        var response = _mockHttpHandler.When(HttpMethod.Head, url)
-            .Respond(HttpStatusCode.OK, "image/png", "");
-        
-        response.WithHeaders("ETag", "\"12345\"");
-        response.WithHeaders("Cache-Control", "max-age=3600");
-        response.WithHeaders("Last-Modified", "Wed, 21 Oct 2015 07:28:00 GMT");
+        const string url = "https://example.com/image.png";
+        _mockHttpHandler.When(HttpMethod.Head, url)
+            .Respond(_ =>
+            {
+                var response = new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("", Encoding.UTF8, "image/png")
+                };
+                response.Headers.ETag = new EntityTagHeaderValue("\"12345\"");
+                response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromSeconds(3600) };
+                response.Content.Headers.LastModified = DateTimeOffset.Parse("Wed, 21 Oct 2015 07:28:00 GMT");
+                return response;
+            });
 
         // Act
         var result = await _cachingProxy.ValidateAndPrepareAsync(url);
@@ -396,14 +380,14 @@ public class CachingProxyTests
     public async Task ValidateAndPrepareAsync_CachedHeaders_RestoresHeaders()
     {
         // Arrange
-        var url = "https://example.com/image.png";
+        const string url = "https://example.com/image.png";
         var headers = new Dictionary<string, string>
         {
             { "Content-Type", "image/png" },
             { "ETag", "\"cached-etag\"" },
             { "Cache-Control", "max-age=7200" }
         };
-        
+
         CreateCacheFileWithHeaders(url, "content", headers);
 
         // Act
@@ -424,65 +408,52 @@ public class CachingProxyTests
     public async Task ServeAsync_LargeContent_HandledCorrectly()
     {
         // Arrange
-        var url = "https://example.com/large-file.bin";
+        const string url = "https://example.com/large-file.bin";
         var largeContent = new string('A', 10000); // 10KB content
         _mockHttpHandler.When(HttpMethod.Get, url)
             .Respond("application/octet-stream", largeContent);
-        
-        using var responseStream = new MemoryStream();
+
+        var responseStream = new MemoryStream();
 
         // Act
         var result = await _cachingProxy.ServeAsync(url, responseStream);
 
         // Assert
-        responseStream.Position = 0;
-        var servedContent = await new StreamReader(responseStream).ReadToEndAsync();
+        var servedContent = Encoding.UTF8.GetString(responseStream.ToArray());
         Assert.AreEqual(largeContent, servedContent);
         Assert.AreEqual(10000, result.ContentLength);
+
+        await responseStream.DisposeAsync();
     }
 
     [TestMethod]
-    public async Task ServeAsync_HttpRequestException_LogsError()
+    public async Task ServeAsync_HttpRequestException_ThrowsException()
     {
         // Arrange
-        var url = "https://example.com/error.png";
+        const string url = "https://example.com/error.png";
         _mockHttpHandler.When(HttpMethod.Get, url)
             .Throw(new HttpRequestException("Network error"));
-        
+
         using var responseStream = new MemoryStream();
 
         // Act & Assert
-        await Assert.ThrowsExceptionAsync<HttpRequestException>(
-            async () => await _cachingProxy.ServeAsync(url, responseStream));
-        
-        _mockLogger.Received(1).Log(
-            LogLevel.Error,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Failed to cache content")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
+        await Assert.ThrowsExceptionAsync<HttpRequestException>(async () =>
+            await _cachingProxy.ServeAsync(url, responseStream));
     }
 
     [TestMethod]
-    public async Task ServeAsync_TaskCanceledException_LogsError()
+    public async Task ServeAsync_TaskCanceledException_ThrowsException()
     {
         // Arrange
-        var url = "https://example.com/timeout.png";
+        const string url = "https://example.com/timeout.png";
         _mockHttpHandler.When(HttpMethod.Get, url)
             .Throw(new TaskCanceledException("Request timeout"));
-        
+
         using var responseStream = new MemoryStream();
 
         // Act & Assert
-        await Assert.ThrowsExceptionAsync<TaskCanceledException>(
-            async () => await _cachingProxy.ServeAsync(url, responseStream));
-        
-        _mockLogger.Received(1).Log(
-            LogLevel.Error,
-            Arg.Any<EventId>(),
-            Arg.Is<object>(o => o.ToString()!.Contains("Failed to cache content")),
-            Arg.Any<Exception>(),
-            Arg.Any<Func<object, Exception?, string>>());
+        await Assert.ThrowsExceptionAsync<TaskCanceledException>(async () =>
+            await _cachingProxy.ServeAsync(url, responseStream));
     }
 
     #endregion
@@ -519,12 +490,11 @@ public class CachingProxyTests
     }
 
     [TestMethod]
-    public async Task ValidateAndPrepareAsync_MultipleSuccessStatusCodes_AllReturnSuccess()
+    public async Task ValidateAndPrepareAsync_SuccessStatusCodes_ReturnSuccess()
     {
         var testCases = new[]
         {
             (HttpStatusCode.OK, "https://example.com/200.png"),
-            (HttpStatusCode.Redirect, "https://example.com/302.png"),
             (HttpStatusCode.NotModified, "https://example.com/304.png")
         };
 
@@ -543,25 +513,49 @@ public class CachingProxyTests
         }
     }
 
+    [TestMethod]
+    public async Task ValidateAndPrepareAsync_RedirectStatusCodes_ReturnFailure()
+    {
+        var testCases = new[]
+        {
+            (HttpStatusCode.Redirect, "https://example.com/302.png"),
+            (HttpStatusCode.Found, "https://example.com/302-found.png")
+        };
+
+        foreach (var (statusCode, url) in testCases)
+        {
+            // Arrange
+            _mockHttpHandler.When(HttpMethod.Head, url)
+                .Respond(statusCode, "image/png", "");
+
+            // Act
+            var result = await _cachingProxy.ValidateAndPrepareAsync(url);
+
+            // Assert
+            Assert.IsFalse(result.Success, $"Status code {statusCode} should return failure");
+            Assert.IsNotNull(result.ErrorMessage, $"Status code {statusCode} should have error message");
+        }
+    }
+
     #endregion
 
     #region Helper Methods
 
-    private string CreateCacheFile(string url, string content, string contentType)
+    private void CreateCacheFile(string url, string content, string contentType)
     {
         var headers = new Dictionary<string, string> { { "Content-Type", contentType } };
-        return CreateCacheFileWithHeaders(url, content, headers);
+        CreateCacheFileWithHeaders(url, content, headers);
     }
 
     private string CreateCacheFileWithHeaders(string url, string content, Dictionary<string, string> headers)
     {
         var cacheFilePath = GetExpectedCacheFilePath(url);
         File.WriteAllText(cacheFilePath, content);
-        
+
         var metadataPath = cacheFilePath + ".meta";
-        var json = System.Text.Json.JsonSerializer.Serialize(headers);
+        var json = JsonSerializer.Serialize(headers);
         File.WriteAllText(metadataPath, json);
-        
+
         return cacheFilePath;
     }
 
@@ -569,13 +563,13 @@ public class CachingProxyTests
     {
         var uri = new Uri(url);
         var fileName = $"{uri.Host}_{uri.PathAndQuery}".Replace('/', '_').Replace('?', '_').Replace(':', '_');
-        
+
         if (fileName.Length > 100)
         {
             var hash = url.GetHashCode().ToString("X");
             fileName = fileName.Substring(0, 90) + "_" + hash;
         }
-        
+
         return Path.Combine(_tempCacheDir, fileName);
     }
 

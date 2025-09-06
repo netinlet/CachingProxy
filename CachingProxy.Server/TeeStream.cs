@@ -3,7 +3,10 @@ namespace CachingProxy.Server;
 public class TeeStream(Stream primaryStream, Stream secondaryStream) : Stream
 {
     private readonly Stream _primaryStream = primaryStream ?? throw new ArgumentNullException(nameof(primaryStream));
-    private readonly Stream _secondaryStream = secondaryStream ?? throw new ArgumentNullException(nameof(secondaryStream));
+
+    private readonly Stream _secondaryStream =
+        secondaryStream ?? throw new ArgumentNullException(nameof(secondaryStream));
+
     private bool _disposed;
 
     public override bool CanRead => _primaryStream.CanRead;
@@ -76,8 +79,8 @@ public class TeeStream(Stream primaryStream, Stream secondaryStream) : Stream
     {
         if (!_disposed && disposing)
         {
-            _primaryStream?.Dispose();
-            _secondaryStream?.Dispose();
+            _primaryStream.Dispose();
+            _secondaryStream.Dispose();
             _disposed = true;
         }
 
