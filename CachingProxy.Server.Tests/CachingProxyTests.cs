@@ -780,7 +780,7 @@ public class CachingProxyTests
             // Clean up streams
             foreach (var stream in streams)
             {
-                stream.Dispose();
+                await stream.DisposeAsync();
             }
         }
     }
@@ -809,16 +809,10 @@ public class CachingProxyTests
 
     private string GetExpectedCacheFilePath(string url)
     {
-        var uri = new Uri(url);
-        var fileName = $"{uri.Host}_{uri.PathAndQuery}".Replace('/', '_').Replace('?', '_').Replace(':', '_');
-
-        if (fileName.Length > 100)
-        {
-            var hash = url.GetHashCode().ToString("X");
-            fileName = fileName.Substring(0, 90) + "_" + hash;
-        }
-
-        return Path.Combine(_tempCacheDir, fileName);
+        using var md5 = System.Security.Cryptography.MD5.Create();
+        var hashBytes = md5.ComputeHash(System.Text.Encoding.UTF8.GetBytes(url));
+        var hash = BitConverter.ToString(hashBytes).Replace("-", "").ToLowerInvariant();
+        return Path.Combine(_tempCacheDir, hash);
     }
 
     #endregion

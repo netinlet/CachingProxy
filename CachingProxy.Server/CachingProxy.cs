@@ -1,5 +1,7 @@
 using System.Collections.Concurrent;
 using System.Net;
+using System.Security.Cryptography;
+using System.Text;
 using System.Text.Json;
 using Microsoft.Extensions.Logging.Abstractions;
 
@@ -24,7 +26,8 @@ public class CachingProxy : IAsyncDisposable
     private readonly SemaphoreSlim _cacheSemaphore;
     private volatile bool _disposed;
 
-    public CachingProxy(string cacheDirectory, HttpClient? httpClient = null, ILogger<CachingProxy>? logger = null, int maxConcurrentDownloads = 10)
+    public CachingProxy(string cacheDirectory, HttpClient? httpClient = null, ILogger<CachingProxy>? logger = null,
+        int maxConcurrentDownloads = 10)
     {
         _cacheDirectory = cacheDirectory ?? throw new ArgumentNullException(nameof(cacheDirectory));
         _httpClient = httpClient ?? new HttpClient();
@@ -72,7 +75,8 @@ public class CachingProxy : IAsyncDisposable
             _logger.LogDebug("Download in progress for URL: {Url} - will be served when complete", url);
             // Return success since we know the download is happening and will complete
             // The actual serving will wait for the download in ServeAsync
-            return (true, new ProxyResponse(null, null, null, null, null, null, new Dictionary<string, string>()), null);
+            return (true, new ProxyResponse(null, null, null, null, null, null, new Dictionary<string, string>()),
+                null);
         }
 
         // Test origin connectivity without downloading
@@ -170,7 +174,7 @@ public class CachingProxy : IAsyncDisposable
         {
             _logger.LogDebug("Request coalescing: Waiting for in-progress download of URL: {Url}", url);
             var existingResponse = await existingTask;
-            
+
             // Now serve from the cache that was just created by the first request
             if (File.Exists(cacheFilePath))
             {
@@ -178,23 +182,24 @@ public class CachingProxy : IAsyncDisposable
                 await cachedFileStream.CopyToAsync(responseStream, cancellationToken);
                 return existingResponse;
             }
-            
+
             // If cache file doesn't exist, something went wrong with the first request
             _logger.LogWarning("Cache file missing after coalesced request completed for URL: {Url}", url);
         }
 
         // File doesn't exist and no request in progress - start a new download
         var downloadTask = DownloadAndCacheAsync(url, cacheFilePath, cancellationToken);
-        
+
         // Add to in-progress requests (or get existing if someone beat us to it)
         var actualTask = _inProgressRequests.GetOrAdd(url, downloadTask);
-        
+
         if (actualTask != downloadTask)
         {
             // Someone else started the download, wait for theirs
-            _logger.LogDebug("Request coalescing: Another download started while we were preparing for URL: {Url}", url);
+            _logger.LogDebug("Request coalescing: Another download started while we were preparing for URL: {Url}",
+                url);
             var otherResponse = await actualTask;
-            
+
             // Serve from cache
             if (File.Exists(cacheFilePath))
             {
@@ -203,19 +208,19 @@ public class CachingProxy : IAsyncDisposable
                 return otherResponse;
             }
         }
-        
+
         // We're the first request - do the actual download and tee to response stream
         try
         {
             var response = await actualTask;
-            
+
             // Serve the content that was just downloaded
             if (File.Exists(cacheFilePath))
             {
                 await using var cachedFileStream = File.OpenRead(cacheFilePath);
                 await cachedFileStream.CopyToAsync(responseStream, cancellationToken);
             }
-            
+
             return response;
         }
         finally
@@ -225,20 +230,20 @@ public class CachingProxy : IAsyncDisposable
         }
     }
 
-    private async Task<ProxyResponse> DownloadAndCacheAsync(string url, string cacheFilePath, CancellationToken cancellationToken)
+    private async Task<ProxyResponse> DownloadAndCacheAsync(string url, string cacheFilePath,
+        CancellationToken cancellationToken)
     {
         if (_disposed)
             throw new ObjectDisposedException(nameof(CachingProxy));
 
         // Acquire semaphore to limit concurrent downloads
         await _cacheSemaphore.WaitAsync(cancellationToken);
-        
+
         // Use temporary file to avoid race conditions
         var tempFilePath = cacheFilePath + ".tmp";
-        
+
         try
         {
-        
             using var originResponse =
                 await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             originResponse.EnsureSuccessStatusCode();
@@ -269,13 +274,13 @@ public class CachingProxy : IAsyncDisposable
             // Download to temporary file
             await originStream.CopyToAsync(tempFileStream, cancellationToken);
             await tempFileStream.FlushAsync(cancellationToken);
-            
+
             // Ensure temporary file is closed before moving
             await tempFileStream.DisposeAsync();
 
             // Atomic move to final cache file location
             File.Move(tempFilePath, cacheFilePath);
-            
+
             // Save headers metadata
             SaveHeadersMetadata(cacheFilePath, headers);
 
@@ -326,19 +331,11 @@ public class CachingProxy : IAsyncDisposable
 
     private string GetCacheFilePath(string url)
     {
-        // Simple cache key generation - you might want something more sophisticated
-        var uri = new Uri(url);
-        var fileName = $"{uri.Host}_{uri.PathAndQuery}".Replace('/', '_').Replace('?', '_').Replace(':', '_');
-
-        // Limit filename length and add hash for uniqueness
-        if (fileName.Length > 100)
-        {
-            var hash = url.GetHashCode().ToString("X");
-            fileName = fileName.Substring(0, 90) + "_" + hash;
-        }
-
-        return Path.Combine(_cacheDirectory, fileName);
+        var hashBytes = MD5.HashData(Encoding.UTF8.GetBytes(url));
+        var hash = Convert.ToHexStringLower(hashBytes);
+        return Path.Combine(_cacheDirectory, hash);
     }
+
 
     private string GetMetadataFilePath(string cacheFilePath)
     {
@@ -403,7 +400,7 @@ public class CachingProxy : IAsyncDisposable
 
         _disposed = true;
 
-        _logger.LogInformation("Disposing CachingProxy - waiting for {Count} in-progress downloads to complete", 
+        _logger.LogInformation("Disposing CachingProxy - waiting for {Count} in-progress downloads to complete",
             _inProgressRequests.Count);
 
         // Wait for all in-progress downloads to complete (with a timeout)
