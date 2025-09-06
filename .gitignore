@@ -3,4 +3,9 @@ obj/
 /packages/
 riderModule.iml
 /_ReSharper.Caches/
-CachingProxy.Server/cache/*
+
+# Cache directory - don't version cached content
+cache/
+*/cache/
+CachingProxy.Server/cache/
+**/cache/**
