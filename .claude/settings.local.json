@@ -9,7 +9,11 @@
       "Bash(dotnet restore:*)",
       "Bash(dotnet build)",
       "Bash(dotnet new:*)",
-      "Bash(dotnet add reference:*)"
+      "Bash(dotnet add reference:*)",
+      "Bash(git restore:*)",
+      "Bash(git rm:*)",
+      "Bash(dotnet add:*)",
+      "Bash(dotnet test)"
     ],
     "deny": [],
     "ask": []
