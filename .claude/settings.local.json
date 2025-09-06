@@ -1,0 +1,17 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(dotnet new classlib)",
+      "Bash(dotnet sln add:*)",
+      "Bash(dotnet sln remove:*)",
+      "Bash(dotnet clean:*)",
+      "Bash(dotnet nuget locals:*)",
+      "Bash(dotnet restore:*)",
+      "Bash(dotnet build)",
+      "Bash(dotnet new:*)",
+      "Bash(dotnet add reference:*)"
+    ],
+    "deny": [],
+    "ask": []
+  }
+}
