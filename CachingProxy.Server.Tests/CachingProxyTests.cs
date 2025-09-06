@@ -31,8 +31,9 @@ public class CachingProxyTests
     }
 
     [TestCleanup]
-    public void Cleanup()
+    public async Task Cleanup()
     {
+        await _cachingProxy.DisposeAsync();
         _httpClient.Dispose();
         _mockHttpHandler.Dispose();
         if (Directory.Exists(_tempCacheDir)) Directory.Delete(_tempCacheDir, true);
@@ -534,6 +535,253 @@ public class CachingProxyTests
             // Assert
             Assert.IsFalse(result.Success, $"Status code {statusCode} should return failure");
             Assert.IsNotNull(result.ErrorMessage, $"Status code {statusCode} should have error message");
+        }
+    }
+
+    #endregion
+
+    #region Race Condition Tests
+
+    [TestMethod]
+    public async Task ServeAsync_SimultaneousRequests_OnlyOneDownloadOccurs()
+    {
+        // Arrange
+        const string url = "https://example.com/large-file.bin";
+        const string content = "large file content that takes time to download";
+        
+        // Use a delay to simulate slow download
+        _mockHttpHandler.When(HttpMethod.Get, url)
+            .Respond(async request =>
+            {
+                await Task.Delay(100); // Simulate network delay
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(content, Encoding.UTF8, "application/octet-stream")
+                };
+            });
+
+        using var responseStream1 = new MemoryStream();
+        using var responseStream2 = new MemoryStream();
+        using var responseStream3 = new MemoryStream();
+
+        // Act - Start three simultaneous requests
+        var task1 = _cachingProxy.ServeAsync(url, responseStream1);
+        var task2 = _cachingProxy.ServeAsync(url, responseStream2);  
+        var task3 = _cachingProxy.ServeAsync(url, responseStream3);
+
+        var results = await Task.WhenAll(task1, task2, task3);
+
+        // Assert
+        var content1 = Encoding.UTF8.GetString(responseStream1.ToArray());
+        var content2 = Encoding.UTF8.GetString(responseStream2.ToArray());
+        var content3 = Encoding.UTF8.GetString(responseStream3.ToArray());
+
+        Assert.AreEqual(content, content1);
+        Assert.AreEqual(content, content2);
+        Assert.AreEqual(content, content3);
+
+        // Verify all responses have the same properties
+        Assert.AreEqual(results[0].ContentType, results[1].ContentType);
+        Assert.AreEqual(results[0].ContentType, results[2].ContentType);
+
+        // Verify the cache file was created only once
+        var cacheFilePath = GetExpectedCacheFilePath(url);
+        Assert.IsTrue(File.Exists(cacheFilePath));
+        var cachedContent = await File.ReadAllTextAsync(cacheFilePath);
+        Assert.AreEqual(content, cachedContent);
+
+        // Verify that request coalescing was logged
+        _mockLogger.Received().Log(
+            LogLevel.Debug,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Request coalescing")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [TestMethod]
+    public async Task ValidateAndPrepareAsync_SimultaneousRequests_HandlesInProgressDownloads()
+    {
+        // Arrange
+        const string url = "https://example.com/test-file.txt";
+        const string content = "test content";
+        
+        _mockHttpHandler.When(HttpMethod.Head, url)
+            .Respond("text/plain", "");
+        _mockHttpHandler.When(HttpMethod.Get, url)
+            .Respond(async request =>
+            {
+                await Task.Delay(50); // Simulate delay
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent(content, Encoding.UTF8, "text/plain")
+                };
+            });
+
+        // Act - Start download in background, then validate
+        using var responseStream = new MemoryStream();
+        var downloadTask = _cachingProxy.ServeAsync(url, responseStream);
+        
+        // Small delay to ensure download has started
+        await Task.Delay(10);
+        
+        var validationResult = await _cachingProxy.ValidateAndPrepareAsync(url);
+        
+        await downloadTask;
+
+        // Assert
+        Assert.IsTrue(validationResult.Success);
+        
+        // Verify in-progress download was detected
+        _mockLogger.Received().Log(
+            LogLevel.Debug,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Download in progress")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [TestMethod]
+    public async Task ServeAsync_ExceptionDuringDownload_CleansUpResources()
+    {
+        // Arrange
+        const string url = "https://example.com/error-file.txt";
+        
+        _mockHttpHandler.When(HttpMethod.Get, url)
+            .Respond(request =>
+            {
+                // Simulate a network error after starting
+                throw new HttpRequestException("Network error during download");
+            });
+
+        using var responseStream = new MemoryStream();
+
+        // Act & Assert
+        await Assert.ThrowsExceptionAsync<HttpRequestException>(async () =>
+            await _cachingProxy.ServeAsync(url, responseStream));
+
+        // Verify cleanup occurred
+        var cacheFilePath = GetExpectedCacheFilePath(url);
+        var tempFilePath = cacheFilePath + ".tmp";
+        
+        Assert.IsFalse(File.Exists(cacheFilePath), "Cache file should not exist after failed download");
+        Assert.IsFalse(File.Exists(tempFilePath), "Temporary file should be cleaned up after failed download");
+        Assert.IsFalse(File.Exists(cacheFilePath + ".meta"), "Metadata file should not exist after failed download");
+
+        // Verify cleanup was logged
+        _mockLogger.Received().Log(
+            LogLevel.Debug,
+            Arg.Any<EventId>(),
+            Arg.Is<object>(o => o.ToString()!.Contains("Cleaned up partial cache files")),
+            Arg.Any<Exception>(),
+            Arg.Any<Func<object, Exception?, string>>());
+    }
+
+    [TestMethod]
+    public async Task ServeAsync_ConcurrentRequestsWithFailure_HandlesGracefully()
+    {
+        // Arrange
+        const string url = "https://example.com/mixed-success.txt";
+        var requestCount = 0;
+        
+        _mockHttpHandler.When(HttpMethod.Get, url)
+            .Respond(request =>
+            {
+                var count = Interlocked.Increment(ref requestCount);
+                if (count == 1)
+                {
+                    // First request fails
+                    throw new HttpRequestException("First request fails");
+                }
+                
+                // Subsequent requests should not happen due to coalescing
+                throw new InvalidOperationException("Unexpected additional request");
+            });
+
+        using var responseStream1 = new MemoryStream();
+        using var responseStream2 = new MemoryStream();
+
+        // Act - Start two simultaneous requests
+        var task1 = _cachingProxy.ServeAsync(url, responseStream1);
+        var task2 = _cachingProxy.ServeAsync(url, responseStream2);
+
+        // Assert - Both should fail with the same exception
+        var exception1 = await Assert.ThrowsExceptionAsync<HttpRequestException>(async () => await task1);
+        var exception2 = await Assert.ThrowsExceptionAsync<HttpRequestException>(async () => await task2);
+
+        Assert.AreEqual("First request fails", exception1.Message);
+        Assert.AreEqual("First request fails", exception2.Message);
+
+        // Verify no cache files were created
+        var cacheFilePath = GetExpectedCacheFilePath(url);
+        Assert.IsFalse(File.Exists(cacheFilePath));
+    }
+
+    [TestMethod]
+    public async Task ServeAsync_MaxConcurrentDownloads_RespectsLimit()
+    {
+        // Arrange - Create proxy with limit of 2 concurrent downloads
+        await _cachingProxy.DisposeAsync();
+        _cachingProxy = new CachingProxy(_tempCacheDir, _httpClient, _mockLogger, 2);
+
+        var downloadStarted = 0;
+        var downloadCompleted = 0;
+        var maxConcurrent = 0;
+        var currentConcurrent = 0;
+        var lockObj = new object();
+
+        _mockHttpHandler.When(HttpMethod.Get, "*")
+            .Respond(async request =>
+            {
+                lock (lockObj)
+                {
+                    currentConcurrent++;
+                    downloadStarted++;
+                    maxConcurrent = Math.Max(maxConcurrent, currentConcurrent);
+                }
+
+                await Task.Delay(100); // Simulate work
+
+                lock (lockObj)
+                {
+                    currentConcurrent--;
+                    downloadCompleted++;
+                }
+
+                return new HttpResponseMessage(HttpStatusCode.OK)
+                {
+                    Content = new StringContent("test", Encoding.UTF8, "text/plain")
+                };
+            });
+
+        // Act - Start 5 concurrent downloads
+        var tasks = new List<Task<ProxyResponse>>();
+        var streams = new List<MemoryStream>();
+        
+        for (int i = 0; i < 5; i++)
+        {
+            var stream = new MemoryStream();
+            streams.Add(stream);
+            tasks.Add(_cachingProxy.ServeAsync($"https://example.com/file{i}.txt", stream));
+        }
+
+        try
+        {
+
+            await Task.WhenAll(tasks);
+
+            // Assert - No more than 2 concurrent downloads should have occurred
+            Assert.AreEqual(5, downloadStarted);
+            Assert.AreEqual(5, downloadCompleted);
+            Assert.IsTrue(maxConcurrent <= 2, $"Max concurrent downloads was {maxConcurrent}, expected <= 2");
+        }
+        finally
+        {
+            // Clean up streams
+            foreach (var stream in streams)
+            {
+                stream.Dispose();
+            }
         }
     }
 

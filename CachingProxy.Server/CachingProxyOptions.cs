@@ -8,4 +8,6 @@ public class CachingProxyOptions
     public int MaxCacheFileSizeMB { get; set; } = 100;
     public int CacheRetentionDays { get; set; } = 7;
     public TimeSpan HttpTimeout { get; set; } = TimeSpan.FromMinutes(2);
+    public int MaxConcurrentDownloads { get; set; } = 10;
+    public TimeSpan InProgressRequestTimeout { get; set; } = TimeSpan.FromMinutes(5);
 }

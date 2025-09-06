@@ -21,7 +21,7 @@ builder.Services.AddSingleton<CachingProxy.Server.CachingProxy>(provider =>
                   new CachingProxyOptions();
     var httpClient = provider.GetRequiredService<HttpClient>();
     var logger = provider.GetRequiredService<ILogger<CachingProxy.Server.CachingProxy>>();
-    return new CachingProxy.Server.CachingProxy(options.CacheDirectory, httpClient, logger);
+    return new CachingProxy.Server.CachingProxy(options.CacheDirectory, httpClient, logger, options.MaxConcurrentDownloads);
 });
 
 var app = builder.Build();
