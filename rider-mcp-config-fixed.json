@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "SharpTools": {
+      "command": "dotnet",
+      "args": ["run", "--", "--port", "3005", "--log-file", "./logs/mcp-sse-server.log", "--log-level", "Debug"],
+      "transport": {
+        "type": "sse",
+        "url": "http://localhost:3005/sse"
+      }
+    }
+  }
+}

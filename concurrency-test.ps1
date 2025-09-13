@@ -25,7 +25,7 @@ try {
 }
 
 # Clear cache to ensure clean test
-Write-Host "🧹 Clearing cache..."
+Write-Host "[CLEAN] Clearing cache..."
 try {
     $null = Invoke-RestMethod -Uri "$PROXY_URL/clear" -Method Post -ErrorAction Stop
     Write-Host "Cache cleared" -ForegroundColor Green
@@ -80,7 +80,7 @@ for ($i = 1; $i -le $CONCURRENT_REQUESTS; $i++) {
     $JOBS += $job
 }
 
-Write-Host "⏳ Waiting for all requests to complete..."
+Write-Host "[WAIT] Waiting for all requests to complete..."
 
 # Wait for all jobs to complete
 $JOBS | Wait-Job | Out-Null
@@ -126,7 +126,7 @@ if ($SUCCESSFUL -gt 1) {
 
 # Show timing distribution
 Write-Host ""
-Write-Host "⏱️  Request Timing Analysis:"
+Write-Host "[TIME] Request Timing Analysis:"
 Write-Host "Request#,HTTP_Code,Time(s)"
 
 # Sort timing results by request number

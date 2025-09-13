@@ -13,7 +13,14 @@
       "Bash(git restore:*)",
       "Bash(git rm:*)",
       "Bash(dotnet add:*)",
-      "Bash(dotnet test)"
+      "Bash(dotnet test)",
+      "Bash(dotnet test:*)",
+      "Bash(curl:*)",
+      "Bash(chmod:*)",
+      "Bash(dotnet run:*)",
+      "Bash(powershell:*)",
+      "Bash(find:*)",
+      "Bash(Remove-Item ./static-cache -Recurse -Force -ErrorAction SilentlyContinue)"
     ],
     "deny": [],
     "ask": []

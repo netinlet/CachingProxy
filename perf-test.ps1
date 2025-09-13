@@ -24,7 +24,7 @@ try {
 }
 
 # Clear cache to ensure clean test
-Write-Host "🧹 Clearing cache..."
+Write-Host "[CLEAN] Clearing cache..."
 try {
     $null = Invoke-RestMethod -Uri "$PROXY_URL/clear" -Method Post -ErrorAction Stop
     Write-Host "Cache cleared" -ForegroundColor Green

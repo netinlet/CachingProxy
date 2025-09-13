@@ -5,12 +5,22 @@ var builder = WebApplication.CreateBuilder(args);
 // Configure options
 builder.Services.Configure<CachingProxyOptions>(
     builder.Configuration.GetSection(CachingProxyOptions.SectionName));
+builder.Services.Configure<StaticFileProxyOptions>(
+    builder.Configuration.GetSection(StaticFileProxyOptions.SectionName));
 
 // Register HttpClient with configuration
 builder.Services.AddHttpClient<CachingProxy.Server.CachingProxy>(client =>
 {
     var options = builder.Configuration.GetSection(CachingProxyOptions.SectionName).Get<CachingProxyOptions>() ??
                   new CachingProxyOptions();
+    client.Timeout = options.HttpTimeout;
+});
+
+// Register HttpClient for StaticFileProxyService
+builder.Services.AddHttpClient<StaticFileProxyService>(client =>
+{
+    var options = builder.Configuration.GetSection(StaticFileProxyOptions.SectionName).Get<StaticFileProxyOptions>() ??
+                  new StaticFileProxyOptions();
     client.Timeout = options.HttpTimeout;
 });
 
@@ -24,7 +34,29 @@ builder.Services.AddSingleton<CachingProxy.Server.CachingProxy>(provider =>
     return new CachingProxy.Server.CachingProxy(options.CacheDirectory, httpClient, logger, options.MaxConcurrentDownloads);
 });
 
+// Register StaticFileProxyService as a singleton service
+builder.Services.AddSingleton<StaticFileProxyService>(provider =>
+{
+    var options = builder.Configuration.GetSection(StaticFileProxyOptions.SectionName).Get<StaticFileProxyOptions>() ??
+                  new StaticFileProxyOptions();
+    var httpClientFactory = provider.GetRequiredService<IHttpClientFactory>();
+    var httpClient = httpClientFactory.CreateClient(nameof(StaticFileProxyService));
+    var logger = provider.GetRequiredService<ILogger<StaticFileProxyService>>();
+    return new StaticFileProxyService(options, httpClient, logger);
+});
+
 var app = builder.Build();
+
+// Add static file proxy middleware (handles /static/* requests)
+app.Use(async (context, next) =>
+{
+    var staticOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<StaticFileProxyOptions>>().Value;
+    var proxyService = app.Services.GetRequiredService<StaticFileProxyService>();
+    var logger = app.Services.GetRequiredService<ILogger<StaticFileProxyMiddleware>>();
+    
+    var middleware = new StaticFileProxyMiddleware(next, proxyService, staticOptions, logger);
+    await middleware.InvokeAsync(context);
+});
 
 // Caching proxy endpoint
 app.MapGet("/proxy",
