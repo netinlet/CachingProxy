@@ -20,7 +20,15 @@
       "Bash(dotnet run:*)",
       "Bash(powershell:*)",
       "Bash(find:*)",
-      "Bash(Remove-Item ./static-cache -Recurse -Force -ErrorAction SilentlyContinue)"
+      "Bash(Remove-Item ./static-cache -Recurse -Force -ErrorAction SilentlyContinue)",
+      "Bash(dotnet build:*)",
+      "Bash(lsof:*)",
+      "Bash(kill:*)",
+      "Bash(pkill:*)",
+      "Bash(sudo netstat:*)",
+      "Bash(netstat:*)",
+      "Bash(ss:*)",
+      "Bash(awk:*)"
     ],
     "deny": [],
     "ask": []
