@@ -1,7 +1,7 @@
 using CachingProxyMiddleware.Services;
 using Microsoft.VisualStudio.TestTools.UnitTesting;
 
-namespace CachingProxyMiddware.Tests.Services;
+namespace CachingProxyMiddleware.Tests.Services;
 
 [TestClass]
 public class DefaultUrlResolverTests

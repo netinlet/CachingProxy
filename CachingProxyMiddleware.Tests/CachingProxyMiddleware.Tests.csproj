@@ -6,6 +6,8 @@
         <ImplicitUsings>enable</ImplicitUsings>
         <IsPackable>false</IsPackable>
         <IsTestProject>true</IsTestProject>
+        <RootNamespace>CachingProxyMiddleware.Tests</RootNamespace>
+        <AssemblyName>CachingProxyMiddleware.Tests</AssemblyName>
     </PropertyGroup>
 
     <ItemGroup>

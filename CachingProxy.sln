@@ -7,7 +7,7 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CachingProxy.Server.Tests",
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CachingProxyMiddleware", "CachingProxyMiddleware\CachingProxyMiddleware.csproj", "{E1FE3845-FB7C-4765-9AD6-C19293971EF1}"
 EndProject
-Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CachingProxyMiddware.Tests", "CachingProxyMiddware.Tests\CachingProxyMiddware.Tests.csproj", "{102C3124-AF12-4223-8897-5D2D0AF4C144}"
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CachingProxyMiddleware.Tests", "CachingProxyMiddleware.Tests\CachingProxyMiddleware.Tests.csproj", "{102C3124-AF12-4223-8897-5D2D0AF4C144}"
 EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
