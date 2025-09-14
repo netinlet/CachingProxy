@@ -117,7 +117,8 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
             });
 
             _inProgressDownloads.Clear();
-            _logger.LogInformation("Cache cleared successfully from directory: {CacheDirectory}", _options.CacheDirectory);
+            _logger.LogInformation("Cache cleared successfully from directory: {CacheDirectory}",
+                _options.CacheDirectory);
             return Result.Success();
         }
         catch (Exception ex)
@@ -142,7 +143,8 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to calculate cache size for directory: {CacheDirectory}", _options.CacheDirectory);
+            _logger.LogError(ex, "Failed to calculate cache size for directory: {CacheDirectory}",
+                _options.CacheDirectory);
             return Result.Failure<long>($"Failed to calculate cache size: {ex.Message}");
         }
     }
@@ -224,26 +226,22 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
 
             var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
             var contentLength = response.Content.Headers.ContentLength;
-            
+
             // Collect headers for metadata
             var headers = new Dictionary<string, string>();
-            
+
             // Add Content-Type with full value (including charset)
             if (response.Content.Headers.ContentType != null)
                 headers["Content-Type"] = response.Content.Headers.ContentType.ToString();
-            
+
             // Add other important headers
             foreach (var header in response.Headers)
-            {
                 if (IsImportantHeader(header.Key))
                     headers[header.Key] = string.Join(", ", header.Value);
-            }
-            
+
             foreach (var header in response.Content.Headers)
-            {
                 if (IsImportantContentHeader(header.Key) && !headers.ContainsKey(header.Key))
                     headers[header.Key] = string.Join(", ", header.Value);
-            }
 
             if (contentLength.HasValue && contentLength.Value > _options.MaxFileSizeBytes)
                 return Result.Failure<CachedMedia>(
@@ -263,14 +261,16 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
 
             // Atomic rename to prevent race conditions
             File.Move(tempFilePath, cacheFilePath);
-            
+
             // Save headers metadata
             SaveHeadersMetadata(cacheFilePath, headers);
 
             var absolutePath = Path.GetFullPath(cacheFilePath);
             var cachedMedia = new CachedMedia(absolutePath, contentType, fileSize, DateTime.UtcNow);
 
-            _logger.LogInformation("Successfully cached media from URL: {Url} with size: {FileSize} bytes at path: {CacheFilePath}", url, fileSize, cacheFilePath);
+            _logger.LogInformation(
+                "Successfully cached media from URL: {Url} with size: {FileSize} bytes at path: {CacheFilePath}", url,
+                fileSize, cacheFilePath);
             return Result.Success(cachedMedia);
         }
         catch (Exception ex)
@@ -337,7 +337,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         if (!Directory.Exists(directoryPath))
             Directory.CreateDirectory(directoryPath);
     }
-    
+
     private void SaveHeadersMetadata(string cacheFilePath, Dictionary<string, string> headers)
     {
         if (headers.Count > 0)
@@ -346,12 +346,12 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
             File.WriteAllText(GetMetadataFilePath(cacheFilePath), json);
         }
     }
-    
+
     private string GetMetadataFilePath(string cacheFilePath)
     {
         return cacheFilePath + ".meta";
     }
-    
+
     private void CleanupMetadataFile(string cacheFilePath)
     {
         try
@@ -365,7 +365,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
             _logger.LogWarning(ex, "Failed to cleanup metadata file for cache path: {CacheFilePath}", cacheFilePath);
         }
     }
-    
+
     private static bool IsImportantHeader(string headerName)
     {
         return headerName.Equals("Accept-Ranges", StringComparison.OrdinalIgnoreCase) ||
@@ -381,7 +381,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
                headerName.Equals("Server", StringComparison.OrdinalIgnoreCase) ||
                headerName.StartsWith("X-", StringComparison.OrdinalIgnoreCase);
     }
-    
+
     private static bool IsImportantContentHeader(string headerName)
     {
         return headerName.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) ||

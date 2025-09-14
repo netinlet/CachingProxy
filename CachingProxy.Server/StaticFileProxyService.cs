@@ -6,14 +6,14 @@ namespace CachingProxy.Server;
 
 public class StaticFileProxyService : IAsyncDisposable
 {
-    private readonly StaticFileProxyOptions _options;
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<StaticFileProxyService> _logger;
-    private readonly ConcurrentDictionary<string, Task<bool>> _inProgressRequests;
     private readonly SemaphoreSlim _downloadSemaphore;
+    private readonly HttpClient _httpClient;
+    private readonly ConcurrentDictionary<string, Task<bool>> _inProgressRequests;
+    private readonly ILogger<StaticFileProxyService> _logger;
+    private readonly StaticFileProxyOptions _options;
     private volatile bool _disposed;
 
-    public StaticFileProxyService(StaticFileProxyOptions options, HttpClient httpClient, 
+    public StaticFileProxyService(StaticFileProxyOptions options, HttpClient httpClient,
         ILogger<StaticFileProxyService>? logger = null)
     {
         _options = options ?? throw new ArgumentNullException(nameof(options));
@@ -26,7 +26,37 @@ public class StaticFileProxyService : IAsyncDisposable
             Directory.CreateDirectory(_options.StaticCacheDirectory);
     }
 
-    public virtual async Task<bool> DownloadAndCacheAsync(string requestPath, CancellationToken cancellationToken = default)
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed) return;
+        _disposed = true;
+
+        _logger.LogInformation("Disposing StaticFileProxyService - waiting for {Count} downloads to complete",
+            _inProgressRequests.Count);
+
+        var inProgressTasks = _inProgressRequests.Values.ToArray();
+        if (inProgressTasks.Length > 0)
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await Task.WhenAll(inProgressTasks).WaitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Timed out waiting for downloads to complete during disposal");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error waiting for downloads during disposal");
+            }
+
+        _downloadSemaphore.Dispose();
+        _inProgressRequests.Clear();
+        _logger.LogInformation("StaticFileProxyService disposed");
+    }
+
+    public virtual async Task<bool> DownloadAndCacheAsync(string requestPath,
+        CancellationToken cancellationToken = default)
     {
         if (_disposed) return false;
 
@@ -38,7 +68,7 @@ public class StaticFileProxyService : IAsyncDisposable
         }
 
         var cacheFilePath = GetCacheFilePath(sanitizedPath);
-        
+
         // If file already exists, no need to download
         if (File.Exists(cacheFilePath))
         {
@@ -58,10 +88,8 @@ public class StaticFileProxyService : IAsyncDisposable
         var actualTask = _inProgressRequests.GetOrAdd(sanitizedPath, downloadTask);
 
         if (actualTask != downloadTask)
-        {
             // Another download started, wait for it
             return await actualTask;
-        }
 
         try
         {
@@ -73,11 +101,11 @@ public class StaticFileProxyService : IAsyncDisposable
         }
     }
 
-    private async Task<bool> PerformDownloadAsync(string sanitizedPath, string cacheFilePath, 
+    private async Task<bool> PerformDownloadAsync(string sanitizedPath, string cacheFilePath,
         CancellationToken cancellationToken)
     {
         await _downloadSemaphore.WaitAsync(cancellationToken);
-        
+
         try
         {
             // Use the sanitized path for origin URL construction
@@ -85,13 +113,14 @@ public class StaticFileProxyService : IAsyncDisposable
             _logger.LogInformation("Downloading from origin: {Url} -> {CacheFile}", originUrl, cacheFilePath);
 
             var tempFilePath = cacheFilePath + ".tmp";
-            
+
             // Ensure cache directory exists
             var cacheDir = Path.GetDirectoryName(cacheFilePath);
             if (!string.IsNullOrEmpty(cacheDir) && !Directory.Exists(cacheDir))
                 Directory.CreateDirectory(cacheDir);
 
-            using var response = await _httpClient.GetAsync(originUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
+            using var response =
+                await _httpClient.GetAsync(originUrl, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
             response.EnsureSuccessStatusCode();
 
             // Save headers metadata
@@ -123,7 +152,7 @@ public class StaticFileProxyService : IAsyncDisposable
             }
 
             var fileInfo = new FileInfo(cacheFilePath);
-            _logger.LogInformation("Cached file: {Path} ({Size} bytes, {ContentType})", 
+            _logger.LogInformation("Cached file: {Path} ({Size} bytes, {ContentType})",
                 sanitizedPath, fileInfo.Length, contentType ?? "unknown");
 
             return true;
@@ -131,7 +160,7 @@ public class StaticFileProxyService : IAsyncDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to download and cache: {Path}", sanitizedPath);
-            
+
             // Cleanup on failure
             var tempFilePath = cacheFilePath + ".tmp";
             try
@@ -159,21 +188,21 @@ public class StaticFileProxyService : IAsyncDisposable
 
         // Remove leading slash and normalize
         var path = requestPath.TrimStart('/').Replace('\\', '/');
-        
+
         // Check for directory traversal attempts
         if (path.Contains("..") || path.Contains("//")) return null;
-        
+
         // Check file extension if specified
         if (_options.AllowedExtensions.Length > 0)
         {
             var extension = Path.GetExtension(path).ToLowerInvariant();
-            
+
             // Allow certain API endpoints even without traditional file extensions
-            bool isSpecialApiEndpoint = path.StartsWith("image/") || 
-                                      path.StartsWith("api/") ||
-                                      path.Contains("/image/");
-                                      
-            if (!isSpecialApiEndpoint && !_options.AllowedExtensions.Contains(extension)) 
+            var isSpecialApiEndpoint = path.StartsWith("image/") ||
+                                       path.StartsWith("api/") ||
+                                       path.Contains("/image/");
+
+            if (!isSpecialApiEndpoint && !_options.AllowedExtensions.Contains(extension))
                 return null;
         }
 
@@ -184,36 +213,5 @@ public class StaticFileProxyService : IAsyncDisposable
     {
         var relativePath = sanitizedPath.TrimStart('/');
         return Path.Combine(_options.StaticCacheDirectory, relativePath);
-    }
-
-    public async ValueTask DisposeAsync()
-    {
-        if (_disposed) return;
-        _disposed = true;
-
-        _logger.LogInformation("Disposing StaticFileProxyService - waiting for {Count} downloads to complete", 
-            _inProgressRequests.Count);
-
-        var inProgressTasks = _inProgressRequests.Values.ToArray();
-        if (inProgressTasks.Length > 0)
-        {
-            try
-            {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                await Task.WhenAll(inProgressTasks).WaitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                _logger.LogWarning("Timed out waiting for downloads to complete during disposal");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error waiting for downloads during disposal");
-            }
-        }
-
-        _downloadSemaphore.Dispose();
-        _inProgressRequests.Clear();
-        _logger.LogInformation("StaticFileProxyService disposed");
     }
 }

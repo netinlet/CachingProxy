@@ -14,12 +14,12 @@ namespace CachingProxyMiddleware.Tests.Services;
 [TestClass]
 public class MediaCacheServiceTests
 {
-    private MediaCacheService _service = null!;
-    private MockHttpMessageHandler _mockHttpHandler = null!;
     private HttpClient _httpClient = null!;
+    private MockHttpMessageHandler _mockHttpHandler = null!;
+    private ILogger<MediaCacheService> _mockLogger = null!;
     private IHostBasedPathProvider _mockPathProvider = null!;
     private IUrlResolver _mockUrlResolver = null!;
-    private ILogger<MediaCacheService> _mockLogger = null!;
+    private MediaCacheService _service = null!;
     private string _tempCacheDir = null!;
 
     [TestInitialize]
@@ -29,7 +29,7 @@ public class MediaCacheServiceTests
         Directory.CreateDirectory(_tempCacheDir);
 
         var options = Options.Create(new MediaCacheOptions { CacheDirectory = _tempCacheDir });
-        
+
         _mockHttpHandler = new MockHttpMessageHandler();
         _httpClient = _mockHttpHandler.ToHttpClient();
         _mockPathProvider = Substitute.For<IHostBasedPathProvider>();
@@ -45,7 +45,7 @@ public class MediaCacheServiceTests
         await _service.DisposeAsync();
         _httpClient.Dispose();
         _mockHttpHandler.Dispose();
-        
+
         if (Directory.Exists(_tempCacheDir))
             Directory.Delete(_tempCacheDir, true);
     }
@@ -59,7 +59,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -72,7 +72,7 @@ public class MediaCacheServiceTests
         Assert.AreEqual(cacheFilePath, result.Value.FilePath);
         Assert.AreEqual("image/jpeg", result.Value.ContentType);
         Assert.IsTrue(File.Exists(cacheFilePath));
-        
+
         var cachedData = await File.ReadAllBytesAsync(cacheFilePath);
         CollectionAssert.AreEqual(imageData, cachedData);
     }
@@ -89,7 +89,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -98,7 +98,7 @@ public class MediaCacheServiceTests
         Assert.IsTrue(result.IsSuccess);
         Assert.AreEqual(cacheFilePath, result.Value.FilePath);
         Assert.AreEqual(imageData.Length, result.Value.Size);
-        
+
         // Verify no HTTP request was made
         _mockHttpHandler.VerifyNoOutstandingExpectation();
     }
@@ -122,7 +122,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -132,7 +132,7 @@ public class MediaCacheServiceTests
         var result = await _service.GetOrCacheAsync(url);
 
         Assert.IsTrue(result.IsFailure);
-        Assert.IsTrue(result.Error.Contains("404") || result.Error.Contains("NotFound"), 
+        Assert.IsTrue(result.Error.Contains("404") || result.Error.Contains("NotFound"),
             $"Expected error to contain '404' or 'NotFound' but got: {result.Error}");
     }
 
@@ -142,7 +142,7 @@ public class MediaCacheServiceTests
         // Create some test cache files
         var testFile1 = Path.Combine(_tempCacheDir, "test1.jpg");
         var testFile2 = Path.Combine(_tempCacheDir, "subdir", "test2.png");
-        
+
         Directory.CreateDirectory(Path.GetDirectoryName(testFile2)!);
         await File.WriteAllTextAsync(testFile1, "test1");
         await File.WriteAllTextAsync(testFile2, "test2");
@@ -159,10 +159,10 @@ public class MediaCacheServiceTests
     {
         var testFile1 = Path.Combine(_tempCacheDir, "test1.jpg");
         var testFile2 = Path.Combine(_tempCacheDir, "test2.png");
-        
+
         var data1 = new byte[100];
         var data2 = new byte[200];
-        
+
         await File.WriteAllBytesAsync(testFile1, data1);
         await File.WriteAllBytesAsync(testFile2, data2);
 
@@ -171,6 +171,22 @@ public class MediaCacheServiceTests
         Assert.IsTrue(result.IsSuccess);
         Assert.AreEqual(300L, result.Value);
     }
+
+    #region Service Dependency Tests
+
+    [TestMethod]
+    public async Task GetOrCacheAsync_AfterDisposal_ReturnsFailure()
+    {
+        var url = new Uri("https://example.com/test.jpg");
+
+        await _service.DisposeAsync();
+        var result = await _service.GetOrCacheAsync(url);
+
+        Assert.IsTrue(result.IsFailure);
+        Assert.IsTrue(result.Error.Contains("disposed") || result.Error.Contains("ObjectDisposedException"));
+    }
+
+    #endregion
 
     #region HTTP Status Code Tests (2xx-5xx)
 
@@ -183,7 +199,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -205,7 +221,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -227,7 +243,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -248,7 +264,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -257,7 +273,8 @@ public class MediaCacheServiceTests
 
         var result = await _service.GetOrCacheAsync(url);
 
-        Assert.IsTrue(result.IsSuccess, "204 No Content is considered a success status code by HttpResponseMessage.IsSuccessStatusCode");
+        Assert.IsTrue(result.IsSuccess,
+            "204 No Content is considered a success status code by HttpResponseMessage.IsSuccessStatusCode");
     }
 
     [TestMethod]
@@ -268,7 +285,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -289,7 +306,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -310,7 +327,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -319,7 +336,8 @@ public class MediaCacheServiceTests
 
         var result = await _service.GetOrCacheAsync(url);
 
-        Assert.IsTrue(result.IsFailure, "304 Not Modified is not considered a success status code by HttpResponseMessage.IsSuccessStatusCode");
+        Assert.IsTrue(result.IsFailure,
+            "304 Not Modified is not considered a success status code by HttpResponseMessage.IsSuccessStatusCode");
     }
 
     [TestMethod]
@@ -330,7 +348,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -351,7 +369,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -372,7 +390,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -393,7 +411,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -414,7 +432,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -435,7 +453,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -456,7 +474,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -477,7 +495,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -498,7 +516,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -519,7 +537,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -540,7 +558,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -561,7 +579,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -597,20 +615,16 @@ public class MediaCacheServiceTests
 
             _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
                 .Returns(Result.Success(url));
-            
+
             _mockPathProvider.GetCacheFilePath(url)
                 .Returns(Result.Success(cacheFilePath));
 
             if (statusCode == HttpStatusCode.NoContent)
-            {
                 _mockHttpHandler.When(HttpMethod.Get, url.ToString())
                     .Respond(statusCode, "image/jpeg", "");
-            }
             else
-            {
                 _mockHttpHandler.When(HttpMethod.Get, url.ToString())
                     .Respond(statusCode, "image/jpeg", new MemoryStream(imageData));
-            }
 
             var result = await _service.GetOrCacheAsync(url);
 
@@ -645,7 +659,7 @@ public class MediaCacheServiceTests
 
             _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
                 .Returns(Result.Success(url));
-            
+
             _mockPathProvider.GetCacheFilePath(url)
                 .Returns(Result.Success(cacheFilePath));
 
@@ -679,7 +693,7 @@ public class MediaCacheServiceTests
 
             _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
                 .Returns(Result.Success(url));
-            
+
             _mockPathProvider.GetCacheFilePath(url)
                 .Returns(Result.Success(cacheFilePath));
 
@@ -701,7 +715,7 @@ public class MediaCacheServiceTests
     public async Task GetOrCacheAsync_SupportedImageExtensions_AllReturnSuccess()
     {
         var supportedExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg", ".bmp", ".ico" };
-        
+
         foreach (var extension in supportedExtensions)
         {
             var url = new Uri($"https://example.com/test{extension}");
@@ -710,7 +724,7 @@ public class MediaCacheServiceTests
 
             _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
                 .Returns(Result.Success(url));
-            
+
             _mockPathProvider.GetCacheFilePath(url)
                 .Returns(Result.Success(cacheFilePath));
 
@@ -727,7 +741,7 @@ public class MediaCacheServiceTests
     public async Task GetOrCacheAsync_SupportedVideoExtensions_AllReturnSuccess()
     {
         var supportedExtensions = new[] { ".mp4", ".webm", ".mov", ".avi", ".mkv", ".flv", ".wmv" };
-        
+
         foreach (var extension in supportedExtensions)
         {
             var url = new Uri($"https://example.com/test{extension}");
@@ -736,7 +750,7 @@ public class MediaCacheServiceTests
 
             _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
                 .Returns(Result.Success(url));
-            
+
             _mockPathProvider.GetCacheFilePath(url)
                 .Returns(Result.Success(cacheFilePath));
 
@@ -753,7 +767,7 @@ public class MediaCacheServiceTests
     public async Task GetOrCacheAsync_UnsupportedExtensions_AllReturnFailure()
     {
         var unsupportedExtensions = new[] { ".txt", ".pdf", ".doc", ".zip", ".exe", ".js", ".html", ".css" };
-        
+
         foreach (var extension in unsupportedExtensions)
         {
             var url = new Uri($"https://example.com/test{extension}");
@@ -761,7 +775,7 @@ public class MediaCacheServiceTests
             var result = await _service.GetOrCacheAsync(url);
 
             Assert.IsTrue(result.IsFailure, $"Extension {extension} should not be supported");
-            Assert.IsTrue(result.Error.Contains("supported media extension"), 
+            Assert.IsTrue(result.Error.Contains("supported media extension"),
                 $"Error should mention unsupported extension for {extension}");
         }
     }
@@ -770,7 +784,7 @@ public class MediaCacheServiceTests
     public async Task GetOrCacheAsync_ExtensionCaseSensitivity_HandledCorrectly()
     {
         var testCases = new[] { ".JPG", ".PNG", ".GIF", ".Mp4", ".WEBP" };
-        
+
         foreach (var extension in testCases)
         {
             var url = new Uri($"https://example.com/test{extension}");
@@ -779,7 +793,7 @@ public class MediaCacheServiceTests
 
             _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
                 .Returns(Result.Success(url));
-            
+
             _mockPathProvider.GetCacheFilePath(url)
                 .Returns(Result.Success(cacheFilePath));
 
@@ -826,7 +840,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -847,7 +861,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -881,7 +895,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Failure<string>("Path generation failed"));
 
@@ -901,7 +915,7 @@ public class MediaCacheServiceTests
 
         _mockUrlResolver.ResolveAsync(url, Arg.Any<CancellationToken>())
             .Returns(Result.Success(url));
-        
+
         _mockPathProvider.GetCacheFilePath(url)
             .Returns(Result.Success(cacheFilePath));
 
@@ -913,25 +927,9 @@ public class MediaCacheServiceTests
         Assert.IsTrue(result.IsSuccess);
         Assert.AreEqual(largeImageData.Length, result.Value.Size);
         Assert.IsTrue(File.Exists(cacheFilePath));
-        
+
         var cachedData = await File.ReadAllBytesAsync(cacheFilePath);
         Assert.AreEqual(largeImageData.Length, cachedData.Length);
-    }
-
-    #endregion
-
-    #region Service Dependency Tests
-
-    [TestMethod]
-    public async Task GetOrCacheAsync_AfterDisposal_ReturnsFailure()
-    {
-        var url = new Uri("https://example.com/test.jpg");
-
-        await _service.DisposeAsync();
-        var result = await _service.GetOrCacheAsync(url);
-
-        Assert.IsTrue(result.IsFailure);
-        Assert.IsTrue(result.Error.Contains("disposed") || result.Error.Contains("ObjectDisposedException"));
     }
 
     #endregion

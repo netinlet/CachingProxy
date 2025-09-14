@@ -20,10 +20,10 @@ public record ProxyResponse(
 public class CachingProxy : IAsyncDisposable
 {
     private readonly string _cacheDirectory;
-    private readonly HttpClient _httpClient;
-    private readonly ILogger<CachingProxy> _logger;
-    private readonly ConcurrentDictionary<string, Task<ProxyResponse>> _inProgressRequests;
     private readonly SemaphoreSlim _cacheSemaphore;
+    private readonly HttpClient _httpClient;
+    private readonly ConcurrentDictionary<string, Task<ProxyResponse>> _inProgressRequests;
+    private readonly ILogger<CachingProxy> _logger;
     private volatile bool _disposed;
 
     public CachingProxy(string cacheDirectory, HttpClient? httpClient = null, ILogger<CachingProxy>? logger = null,
@@ -37,6 +37,39 @@ public class CachingProxy : IAsyncDisposable
 
         if (!Directory.Exists(_cacheDirectory))
             Directory.CreateDirectory(_cacheDirectory);
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+
+        _logger.LogInformation("Disposing CachingProxy - waiting for {Count} in-progress downloads to complete",
+            _inProgressRequests.Count);
+
+        // Wait for all in-progress downloads to complete (with a timeout)
+        var inProgressTasks = _inProgressRequests.Values.ToArray();
+        if (inProgressTasks.Length > 0)
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await Task.WhenAll(inProgressTasks).WaitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Timed out waiting for in-progress downloads to complete during disposal");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error waiting for in-progress downloads during disposal");
+            }
+
+        _cacheSemaphore.Dispose();
+        _inProgressRequests.Clear();
+
+        _logger.LogInformation("CachingProxy disposed");
     }
 
     public async Task<(bool Success, ProxyResponse Response, string? ErrorMessage)> ValidateAndPrepareAsync(string url,
@@ -390,41 +423,6 @@ public class CachingProxy : IAsyncDisposable
         }
     }
 
-    public async ValueTask DisposeAsync()
-    {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-
-        _logger.LogInformation("Disposing CachingProxy - waiting for {Count} in-progress downloads to complete",
-            _inProgressRequests.Count);
-
-        // Wait for all in-progress downloads to complete (with a timeout)
-        var inProgressTasks = _inProgressRequests.Values.ToArray();
-        if (inProgressTasks.Length > 0)
-        {
-            try
-            {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                await Task.WhenAll(inProgressTasks).WaitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                _logger.LogWarning("Timed out waiting for in-progress downloads to complete during disposal");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error waiting for in-progress downloads during disposal");
-            }
-        }
-
-        _cacheSemaphore.Dispose();
-        _inProgressRequests.Clear();
-
-        _logger.LogInformation("CachingProxy disposed");
-    }
-
     public Task<(int FilesDeleted, int ErrorsEncountered)> ClearCacheAsync()
     {
         _logger.LogInformation("Starting cache clear operation");
@@ -444,7 +442,6 @@ public class CachingProxy : IAsyncDisposable
             _logger.LogInformation("Found {FileCount} files to delete", cacheFiles.Length);
 
             foreach (var file in cacheFiles)
-            {
                 try
                 {
                     File.Delete(file);
@@ -456,12 +453,12 @@ public class CachingProxy : IAsyncDisposable
                     errorsEncountered++;
                     _logger.LogWarning(ex, "Failed to delete cache file: {FilePath}", file);
                 }
-            }
 
             // Also clear any in-progress requests since cache is being flushed
             _inProgressRequests.Clear();
 
-            _logger.LogInformation("Cache clear completed: {FilesDeleted} files deleted, {ErrorsEncountered} errors encountered", 
+            _logger.LogInformation(
+                "Cache clear completed: {FilesDeleted} files deleted, {ErrorsEncountered} errors encountered",
                 filesDeleted, errorsEncountered);
 
             return Task.FromResult((filesDeleted, errorsEncountered));

@@ -1,4 +1,5 @@
 using System.Net;
+using System.Net.Http.Headers;
 using System.Text.Json;
 using Microsoft.Extensions.Logging;
 using NSubstitute;
@@ -9,11 +10,11 @@ namespace CachingProxy.Server.Tests;
 [TestClass]
 public class StaticFileProxyServiceTests
 {
-    private StaticFileProxyService _staticFileProxyService = null!;
     private HttpClient _httpClient = null!;
     private MockHttpMessageHandler _mockHttpHandler = null!;
     private ILogger<StaticFileProxyService> _mockLogger = null!;
     private StaticFileProxyOptions _options = null!;
+    private StaticFileProxyService _staticFileProxyService = null!;
     private string _tempCacheDir = null!;
 
     [TestInitialize]
@@ -43,23 +44,65 @@ public class StaticFileProxyServiceTests
         await _staticFileProxyService.DisposeAsync();
         _httpClient.Dispose();
         _mockHttpHandler.Dispose();
-        if (Directory.Exists(_tempCacheDir)) 
+        if (Directory.Exists(_tempCacheDir))
             Directory.Delete(_tempCacheDir, true);
     }
+
+    #region Metadata Tests
+
+    [TestMethod]
+    public async Task DownloadAndCacheAsync_WithHeaders_SavesMetadata()
+    {
+        var testPath = "/images/headers.jpg";
+        var testContent = new byte[] { 1, 2, 3, 4, 5 };
+        var expectedUrl = "https://example.com/images/headers.jpg";
+
+        var response = new HttpResponseMessage(HttpStatusCode.OK)
+        {
+            Content = new ByteArrayContent(testContent)
+        };
+        response.Content.Headers.ContentType = new MediaTypeHeaderValue("image/jpeg");
+        response.Content.Headers.LastModified = DateTimeOffset.UtcNow;
+        response.Headers.ETag = new EntityTagHeaderValue("\"test-etag\"");
+        response.Headers.CacheControl = new CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
+
+        _mockHttpHandler
+            .When(HttpMethod.Get, expectedUrl)
+            .Respond(req => Task.FromResult(response));
+
+        var result = await _staticFileProxyService.DownloadAndCacheAsync(testPath);
+
+        Assert.IsTrue(result);
+
+        var cacheFilePath = Path.Combine(_tempCacheDir, "images", "headers.jpg");
+        var metadataPath = cacheFilePath + ".meta";
+        Assert.IsTrue(File.Exists(metadataPath));
+
+        var metadataJson = await File.ReadAllTextAsync(metadataPath);
+        var metadata = JsonSerializer.Deserialize<Dictionary<string, string>>(metadataJson);
+
+        Assert.IsNotNull(metadata);
+        Assert.AreEqual("image/jpeg", metadata["Content-Type"]);
+        Assert.IsTrue(metadata.ContainsKey("Last-Modified"));
+        Assert.AreEqual("\"test-etag\"", metadata["ETag"]);
+        Assert.IsTrue(metadata.ContainsKey("Cache-Control"));
+    }
+
+    #endregion
 
     #region Constructor Tests
 
     [TestMethod]
     public void Constructor_NullOptions_ThrowsArgumentNullException()
     {
-        Assert.ThrowsException<ArgumentNullException>(() => 
+        Assert.ThrowsException<ArgumentNullException>(() =>
             new StaticFileProxyService(null!, _httpClient, _mockLogger));
     }
 
     [TestMethod]
     public void Constructor_NullHttpClient_ThrowsArgumentNullException()
     {
-        Assert.ThrowsException<ArgumentNullException>(() => 
+        Assert.ThrowsException<ArgumentNullException>(() =>
             new StaticFileProxyService(_options, null!, _mockLogger));
     }
 
@@ -68,9 +111,9 @@ public class StaticFileProxyServiceTests
     {
         var newCacheDir = Path.Combine(Path.GetTempPath(), Guid.NewGuid().ToString());
         var options = new StaticFileProxyOptions { StaticCacheDirectory = newCacheDir };
-        
+
         await using var service = new StaticFileProxyService(options, _httpClient, _mockLogger);
-        
+
         Assert.IsTrue(Directory.Exists(newCacheDir));
         Directory.Delete(newCacheDir);
     }
@@ -116,34 +159,29 @@ public class StaticFileProxyServiceTests
     [TestMethod]
     public async Task DownloadAndCacheAsync_ValidPath_ReturnsExpectedResult()
     {
-        // Arrange
         var testPath = "/images/test.jpg";
-        
+
         // Don't set up HTTP handler expectations - just test path validation
-        // Act
         var result = await _staticFileProxyService.DownloadAndCacheAsync(testPath);
 
-        // Assert - This will fail due to network, but should not fail due to path validation
+        // This will fail due to network, but should not fail due to path validation
         Assert.IsFalse(result); // Network failure expected without proper setup
     }
 
     [TestMethod]
     public async Task DownloadAndCacheAsync_HttpError_ReturnsFalse()
     {
-        // Arrange
         var testPath = "/images/notfound.jpg";
         var expectedUrl = "https://example.com/images/notfound.jpg";
-        
+
         _mockHttpHandler
             .When(HttpMethod.Get, expectedUrl)
             .Respond(HttpStatusCode.NotFound);
 
-        // Act
         var result = await _staticFileProxyService.DownloadAndCacheAsync(testPath);
 
-        // Assert
         Assert.IsFalse(result);
-        
+
         var cacheFilePath = Path.Combine(_tempCacheDir, "images", "notfound.jpg");
         Assert.IsFalse(File.Exists(cacheFilePath));
     }
@@ -151,21 +189,18 @@ public class StaticFileProxyServiceTests
     [TestMethod]
     public async Task DownloadAndCacheAsync_ExistingFile_ReturnsTrueWithoutDownload()
     {
-        // Arrange
         var testPath = "/images/existing.jpg";
         var cacheFilePath = Path.Combine(_tempCacheDir, "images", "existing.jpg");
-        
+
         Directory.CreateDirectory(Path.GetDirectoryName(cacheFilePath)!);
         await File.WriteAllTextAsync(cacheFilePath, "existing content");
-        
+
         // Don't set up any HTTP expectations since it shouldn't make a request
 
-        // Act
         var result = await _staticFileProxyService.DownloadAndCacheAsync(testPath);
 
-        // Assert
         Assert.IsTrue(result);
-        
+
         // Verify no HTTP requests were made
         _mockHttpHandler.VerifyNoOutstandingExpectation();
     }
@@ -173,12 +208,11 @@ public class StaticFileProxyServiceTests
     [TestMethod]
     public async Task DownloadAndCacheAsync_ConcurrentRequests_OnlyOneDownload()
     {
-        // Arrange
         var testPath = "/images/concurrent.jpg";
         var testContent = new byte[] { 1, 2, 3, 4, 5 };
         var expectedUrl = "https://example.com/images/concurrent.jpg";
         var requestCount = 0;
-        
+
         _mockHttpHandler
             .When(HttpMethod.Get, expectedUrl)
             .Respond(async () =>
@@ -189,71 +223,22 @@ public class StaticFileProxyServiceTests
                 {
                     Content = new ByteArrayContent(testContent)
                     {
-                        Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg") }
+                        Headers = { ContentType = new MediaTypeHeaderValue("image/jpeg") }
                     }
                 };
             });
 
-        // Act - Start multiple concurrent downloads
+        // Start multiple concurrent downloads
         var tasks = new List<Task<bool>>();
-        for (int i = 0; i < 5; i++)
-        {
-            tasks.Add(_staticFileProxyService.DownloadAndCacheAsync(testPath));
-        }
-        
+        for (var i = 0; i < 5; i++) tasks.Add(_staticFileProxyService.DownloadAndCacheAsync(testPath));
+
         var results = await Task.WhenAll(tasks);
 
-        // Assert
         Assert.IsTrue(results.All(r => r)); // All should succeed
         Assert.AreEqual(1, requestCount); // Only one HTTP request should have been made
-        
+
         var cacheFilePath = Path.Combine(_tempCacheDir, "images", "concurrent.jpg");
         Assert.IsTrue(File.Exists(cacheFilePath));
-    }
-
-    #endregion
-
-    #region Metadata Tests
-
-    [TestMethod]
-    public async Task DownloadAndCacheAsync_WithHeaders_SavesMetadata()
-    {
-        // Arrange
-        var testPath = "/images/headers.jpg";
-        var testContent = new byte[] { 1, 2, 3, 4, 5 };
-        var expectedUrl = "https://example.com/images/headers.jpg";
-        
-        var response = new HttpResponseMessage(HttpStatusCode.OK)
-        {
-            Content = new ByteArrayContent(testContent)
-        };
-        response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg");
-        response.Content.Headers.LastModified = DateTimeOffset.UtcNow;
-        response.Headers.ETag = new System.Net.Http.Headers.EntityTagHeaderValue("\"test-etag\"");
-        response.Headers.CacheControl = new System.Net.Http.Headers.CacheControlHeaderValue { MaxAge = TimeSpan.FromHours(1) };
-        
-        _mockHttpHandler
-            .When(HttpMethod.Get, expectedUrl)
-            .Respond(req => Task.FromResult(response));
-
-        // Act
-        var result = await _staticFileProxyService.DownloadAndCacheAsync(testPath);
-
-        // Assert
-        Assert.IsTrue(result);
-        
-        var cacheFilePath = Path.Combine(_tempCacheDir, "images", "headers.jpg");
-        var metadataPath = cacheFilePath + ".meta";
-        Assert.IsTrue(File.Exists(metadataPath));
-        
-        var metadataJson = await File.ReadAllTextAsync(metadataPath);
-        var metadata = JsonSerializer.Deserialize<Dictionary<string, string>>(metadataJson);
-        
-        Assert.IsNotNull(metadata);
-        Assert.AreEqual("image/jpeg", metadata["Content-Type"]);
-        Assert.IsTrue(metadata.ContainsKey("Last-Modified"));
-        Assert.AreEqual("\"test-etag\"", metadata["ETag"]);
-        Assert.IsTrue(metadata.ContainsKey("Cache-Control"));
     }
 
     #endregion
@@ -263,12 +248,11 @@ public class StaticFileProxyServiceTests
     [TestMethod]
     public async Task DisposeAsync_WaitsForInProgressDownloads()
     {
-        // Arrange
         var testPath = "/images/slow.jpg";
         var expectedUrl = "https://example.com/images/slow.jpg";
         var downloadStarted = false;
         var downloadCompleted = false;
-        
+
         _mockHttpHandler
             .When(HttpMethod.Get, expectedUrl)
             .Respond(async () =>
@@ -280,19 +264,16 @@ public class StaticFileProxyServiceTests
                 {
                     Content = new ByteArrayContent([1, 2, 3])
                     {
-                        Headers = { ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("image/jpeg") }
+                        Headers = { ContentType = new MediaTypeHeaderValue("image/jpeg") }
                     }
                 };
             });
 
         // Start download but don't wait
         var downloadTask = _staticFileProxyService.DownloadAndCacheAsync(testPath);
-        
+
         // Wait for download to start
-        while (!downloadStarted)
-        {
-            await Task.Delay(10);
-        }
+        while (!downloadStarted) await Task.Delay(10);
 
         // Act - Dispose while download is in progress
         await _staticFileProxyService.DisposeAsync();
@@ -305,11 +286,9 @@ public class StaticFileProxyServiceTests
     [TestMethod]
     public async Task DownloadAndCacheAsync_AfterDisposal_ReturnsFalse()
     {
-        // Act
         await _staticFileProxyService.DisposeAsync();
         var result = await _staticFileProxyService.DownloadAndCacheAsync("/test.jpg");
 
-        // Assert
         Assert.IsFalse(result);
     }
 

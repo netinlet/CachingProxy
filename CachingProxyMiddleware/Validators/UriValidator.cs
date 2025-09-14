@@ -4,28 +4,38 @@ namespace CachingProxyMiddleware.Validators;
 
 public static class UriValidator
 {
-    public static Result<Uri> ValidateProxyUri(Uri url) =>
-        Maybe.From(url)
+    public static Result<Uri> ValidateProxyUri(Uri url)
+    {
+        return Maybe.From(url)
             .ToResult("URL cannot be null")
             .Bind(ValidateAbsoluteUri)
             .Bind(ValidateHttpScheme)
             .Bind(ValidateHost);
+    }
 
-    public static Result<Uri> ValidateProxyUriWithFileExtension(Uri url) =>
-        ValidateProxyUri(url)
+    public static Result<Uri> ValidateProxyUriWithFileExtension(Uri url)
+    {
+        return ValidateProxyUri(url)
             .Bind(ValidateHasFileExtension)
             .Bind(ValidateNoPathTraversal);
+    }
 
-    private static Result<Uri> ValidateAbsoluteUri(Uri url) =>
-        Validate(url, u => u.IsAbsoluteUri,
+    private static Result<Uri> ValidateAbsoluteUri(Uri url)
+    {
+        return Validate(url, u => u.IsAbsoluteUri,
             "URL must be absolute, not relative. Only full HTTP/HTTPS URLs are accepted for proxying");
+    }
 
-    private static Result<Uri> ValidateHttpScheme(Uri url) =>
-        Validate(url, u => u.Scheme is "http" or "https",
+    private static Result<Uri> ValidateHttpScheme(Uri url)
+    {
+        return Validate(url, u => u.Scheme is "http" or "https",
             $"Only HTTP and HTTPS schemes are supported for proxying. Received: {url?.Scheme}");
+    }
 
-    private static Result<Uri> ValidateHost(Uri url) =>
-        Validate(url, u => !string.IsNullOrWhiteSpace(u.Host), "URL must have a valid host");
+    private static Result<Uri> ValidateHost(Uri url)
+    {
+        return Validate(url, u => !string.IsNullOrWhiteSpace(u.Host), "URL must have a valid host");
+    }
 
     private static Result<Uri> ValidateHasFileExtension(Uri url)
     {

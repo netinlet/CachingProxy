@@ -1,15 +1,15 @@
-using Microsoft.Extensions.FileProviders;
+using System.Text.Json;
 
 namespace CachingProxy.Server;
 
 public class StaticFileProxyMiddleware
 {
-    private readonly RequestDelegate _next;
-    private readonly StaticFileProxyService _proxyService;
-    private readonly StaticFileProxyOptions _options;
     private readonly ILogger<StaticFileProxyMiddleware> _logger;
+    private readonly RequestDelegate _next;
+    private readonly StaticFileProxyOptions _options;
+    private readonly StaticFileProxyService _proxyService;
 
-    public StaticFileProxyMiddleware(RequestDelegate next, StaticFileProxyService proxyService, 
+    public StaticFileProxyMiddleware(RequestDelegate next, StaticFileProxyService proxyService,
         StaticFileProxyOptions options, ILogger<StaticFileProxyMiddleware> logger)
     {
         _next = next;
@@ -21,7 +21,7 @@ public class StaticFileProxyMiddleware
     public async Task InvokeAsync(HttpContext context)
     {
         // Only handle GET requests to /static/*
-        if (context.Request.Method != "GET" || 
+        if (context.Request.Method != "GET" ||
             !context.Request.Path.StartsWithSegments("/static", out var remainingPath))
         {
             await _next(context);
@@ -39,11 +39,11 @@ public class StaticFileProxyMiddleware
         // File not cached, try to download
         var originalPath = remainingPath.ToString();
         _logger.LogDebug("Static file not found, attempting download: {Path}", originalPath);
-        
+
         try
         {
             var success = await _proxyService.DownloadAndCacheAsync(originalPath, context.RequestAborted);
-            
+
             if (success && File.Exists(cacheFilePath))
             {
                 _logger.LogDebug("Download successful, serving cached file: {Path}", originalPath);
@@ -73,36 +73,32 @@ public class StaticFileProxyMiddleware
     private async Task ServeFile(HttpContext context, string cacheFilePath)
     {
         var fileInfo = new FileInfo(cacheFilePath);
-        
+
         // Try to determine content type from file extension first
         var contentType = GetContentType(cacheFilePath);
         var metadataPath = cacheFilePath + ".meta";
         if (File.Exists(metadataPath))
-        {
             try
             {
                 var json = await File.ReadAllTextAsync(metadataPath);
-                var headers = System.Text.Json.JsonSerializer.Deserialize<Dictionary<string, string>>(json);
-                
+                var headers = JsonSerializer.Deserialize<Dictionary<string, string>>(json);
+
                 if (headers != null)
                 {
                     // Override content type from metadata if available (more accurate than extension)
                     if (headers.TryGetValue("Content-Type", out var metaContentType))
                         contentType = metaContentType;
-                    
+
                     foreach (var header in headers)
-                    {
                         if (header.Key != "Content-Type" && header.Key != "Content-Length")
                             context.Response.Headers.TryAdd(header.Key, header.Value);
-                    }
                 }
             }
             catch
             {
                 // Ignore metadata errors
             }
-        }
-        
+
         // Set the final content type and length
         context.Response.ContentType = contentType;
         context.Response.ContentLength = fileInfo.Length;

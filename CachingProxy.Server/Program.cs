@@ -1,4 +1,5 @@
 using CachingProxy.Server;
+using Microsoft.Extensions.Options;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -31,7 +32,8 @@ builder.Services.AddSingleton<CachingProxy.Server.CachingProxy>(provider =>
                   new CachingProxyOptions();
     var httpClient = provider.GetRequiredService<HttpClient>();
     var logger = provider.GetRequiredService<ILogger<CachingProxy.Server.CachingProxy>>();
-    return new CachingProxy.Server.CachingProxy(options.CacheDirectory, httpClient, logger, options.MaxConcurrentDownloads);
+    return new CachingProxy.Server.CachingProxy(options.CacheDirectory, httpClient, logger,
+        options.MaxConcurrentDownloads);
 });
 
 // Register StaticFileProxyService as a singleton service
@@ -50,10 +52,10 @@ var app = builder.Build();
 // Add static file proxy middleware (handles /static/* requests)
 app.Use(async (context, next) =>
 {
-    var staticOptions = app.Services.GetRequiredService<Microsoft.Extensions.Options.IOptions<StaticFileProxyOptions>>().Value;
+    var staticOptions = app.Services.GetRequiredService<IOptions<StaticFileProxyOptions>>().Value;
     var proxyService = app.Services.GetRequiredService<StaticFileProxyService>();
     var logger = app.Services.GetRequiredService<ILogger<StaticFileProxyMiddleware>>();
-    
+
     var middleware = new StaticFileProxyMiddleware(next, proxyService, staticOptions, logger);
     await middleware.InvokeAsync(context);
 });
@@ -156,12 +158,12 @@ app.MapPost("/clear", async (CachingProxy.Server.CachingProxy cachingProxy) =>
     try
     {
         var result = await cachingProxy.ClearCacheAsync();
-        return Results.Ok(new 
+        return Results.Ok(new
         {
             Success = true,
             Message = "Cache cleared successfully",
-            FilesDeleted = result.FilesDeleted,
-            ErrorsEncountered = result.ErrorsEncountered
+            result.FilesDeleted,
+            result.ErrorsEncountered
         });
     }
     catch (Exception ex)
@@ -171,6 +173,7 @@ app.MapPost("/clear", async (CachingProxy.Server.CachingProxy cachingProxy) =>
 });
 
 // Info endpoint
-app.MapGet("/", () => "CachingProxy API - Use /proxy?url=<your-url> to cache and serve content. Use POST /clear to flush cache.");
+app.MapGet("/",
+    () => "CachingProxy API - Use /proxy?url=<your-url> to cache and serve content. Use POST /clear to flush cache.");
 
 app.Run();

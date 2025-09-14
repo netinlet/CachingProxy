@@ -45,7 +45,8 @@ public class MediaProxyMiddleware
         await result.Match(
             async cachedMedia =>
             {
-                _logger.LogDebug("Serving cached media from URL: {Url} at file path: {FilePath}", uriResult.Value, cachedMedia.FilePath);
+                _logger.LogDebug("Serving cached media from URL: {Url} at file path: {FilePath}", uriResult.Value,
+                    cachedMedia.FilePath);
 
                 context.Response.ContentType = cachedMedia.ContentType;
                 context.Response.ContentLength = cachedMedia.Size;

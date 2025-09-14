@@ -1,3 +1,5 @@
+using CachingProxyMiddleware.Services;
+
 namespace CachingProxyMiddleware.Models;
 
 public class MediaCacheOptions
@@ -9,5 +11,5 @@ public class MediaCacheOptions
     public int MaxConcurrentDownloads { get; set; } = 10;
     public long MaxFileSizeBytes { get; set; } = 100 * 1024 * 1024; // 100MB
 
-    public string[] AllowedExtensions { get; set; } = Services.ContentTypeResolver.GetSupportedExtensions();
+    public string[] AllowedExtensions { get; set; } = ContentTypeResolver.GetSupportedExtensions();
 }

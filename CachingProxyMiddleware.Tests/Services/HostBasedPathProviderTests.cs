@@ -45,8 +45,10 @@ public class HostBasedPathProviderTests
         var result = _provider.GetCacheFilePath(url);
 
         Assert.IsTrue(result.IsSuccess);
-        Assert.IsTrue(result.Value.Contains("example_com"), $"Expected path to contain 'example_com' but got: {result.Value}");
-        Assert.IsTrue(result.Value.EndsWith("images/test.jpg"), $"Expected path to end with 'images/test.jpg' but got: {result.Value}");
+        Assert.IsTrue(result.Value.Contains("example_com"),
+            $"Expected path to contain 'example_com' but got: {result.Value}");
+        Assert.IsTrue(result.Value.EndsWith("images/test.jpg"),
+            $"Expected path to end with 'images/test.jpg' but got: {result.Value}");
     }
 
     [TestMethod]
@@ -73,7 +75,8 @@ public class HostBasedPathProviderTests
         var result = _provider.GetHostDirectory(url);
 
         Assert.IsTrue(result.IsSuccess);
-        Assert.IsTrue(result.Value.Contains("example_com_8080"), $"Expected path to contain 'example_com_8080' but got: {result.Value}");
+        Assert.IsTrue(result.Value.Contains("example_com_8080"),
+            $"Expected path to contain 'example_com_8080' but got: {result.Value}");
     }
 
     #region Advanced Path Sanitization Tests
@@ -89,7 +92,8 @@ public class HostBasedPathProviderTests
         Assert.IsFalse(result.Value.Contains(' '), "Spaces should be sanitized");
         // After URL decoding, spaces become actual spaces, then get sanitized to underscores
         Assert.IsTrue(result.Value.Contains('_'), "Spaces should be replaced with underscores after URL decoding");
-        Assert.IsFalse(result.Value.Contains("%20"), "URL-encoded spaces should be decoded and sanitized, not preserved");
+        Assert.IsFalse(result.Value.Contains("%20"),
+            "URL-encoded spaces should be decoded and sanitized, not preserved");
     }
 
     [TestMethod]
@@ -102,7 +106,7 @@ public class HostBasedPathProviderTests
         Assert.IsTrue(result.IsFailure, "Path traversal attempts without file extensions should be rejected");
         Assert.IsTrue(result.Error.Contains("extension") || result.Error.Contains("file"));
     }
-    
+
     [TestMethod]
     public void GetCacheFilePath_PathTraversalAttempt_RejectsInvalidPathWithExtension()
     {
@@ -111,10 +115,10 @@ public class HostBasedPathProviderTests
         var result = _provider.GetCacheFilePath(url);
 
         Assert.IsTrue(result.IsFailure, "Path traversal attempt should be rejected");
-        Assert.IsTrue(result.Error.Contains("traversal") || result.Error.Contains("security"), 
+        Assert.IsTrue(result.Error.Contains("traversal") || result.Error.Contains("security"),
             $"Expected security/traversal error but got: {result.Error}");
     }
-    
+
     [TestMethod]
     public void GetCacheFilePath_PathWithSpecialCharacters_SanitizesAll()
     {
@@ -130,17 +134,18 @@ public class HostBasedPathProviderTests
 
             // Check only the filename portion to avoid Windows drive letter issues (C:)
             var filename = Path.GetFileName(result.Value);
-            Assert.IsFalse(filename.Contains(specialChar), $"Filename should not contain special character {specialChar} after sanitization");
+            Assert.IsFalse(filename.Contains(specialChar),
+                $"Filename should not contain special character {specialChar} after sanitization");
             Assert.IsTrue(filename.Contains("_"), $"Filename should contain underscore replacement for {specialChar}");
         }
 
         // Test characters that get URL-encoded but are now properly decoded and sanitized
         var encodedTestCases = new[]
         {
-            ("<", "%3C"),  // < gets encoded to %3C, then decoded and sanitized
-            (">", "%3E"),  // > gets encoded to %3E, then decoded and sanitized
+            ("<", "%3C"), // < gets encoded to %3C, then decoded and sanitized
+            (">", "%3E"), // > gets encoded to %3E, then decoded and sanitized
             ("\"", "%22"), // " gets encoded to %22, then decoded and sanitized
-            ("|", "%7C"),  // | gets encoded to %7C, then decoded and sanitized
+            ("|", "%7C") // | gets encoded to %7C, then decoded and sanitized
         };
 
         foreach (var (originalChar, _) in encodedTestCases)
@@ -150,10 +155,11 @@ public class HostBasedPathProviderTests
 
             Assert.IsTrue(result.IsSuccess, $"Should handle encoded character representing: {originalChar}");
 
-            // After our security fix, the filename should NOT contain the original character
+            // The filename should NOT contain the original character
             // because it gets URL-decoded first, then sanitized
             var filename = Path.GetFileName(result.Value);
-            Assert.IsFalse(filename.Contains(originalChar), $"Filename should not contain original character {originalChar} after sanitization");
+            Assert.IsFalse(filename.Contains(originalChar),
+                $"Filename should not contain original character {originalChar} after sanitization");
             Assert.IsTrue(filename.Contains("_"), $"Filename should contain underscore replacement for {originalChar}");
         }
 
@@ -173,7 +179,7 @@ public class HostBasedPathProviderTests
         {
             ("https://example.com/test%2E%2E/file.jpg", "URL-encoded dot-dot traversal"),
             ("https://example.com/test%2F%2E%2E%2Ffile.jpg", "URL-encoded slash-dot-dot traversal"),
-            ("https://example.com/test%00file.jpg", "URL-encoded null byte"),
+            ("https://example.com/test%00file.jpg", "URL-encoded null byte")
         };
 
         foreach (var (urlString, description) in securityTestCases)
@@ -272,7 +278,7 @@ public class HostBasedPathProviderTests
         var result = _provider.GetHostDirectory(url);
 
         Assert.IsTrue(result.IsSuccess);
-        Assert.IsTrue(result.Value.Contains("sub-domain_example-site_co_uk"), 
+        Assert.IsTrue(result.Value.Contains("sub-domain_example-site_co_uk"),
             $"Expected sanitized host but got: {result.Value}");
     }
 
@@ -284,7 +290,7 @@ public class HostBasedPathProviderTests
         var result = _provider.GetHostDirectory(url);
 
         Assert.IsTrue(result.IsSuccess);
-        Assert.IsTrue(result.Value.Contains("192_168_1_100_8080"), 
+        Assert.IsTrue(result.Value.Contains("192_168_1_100_8080"),
             $"Expected sanitized IP address but got: {result.Value}");
     }
 
@@ -342,7 +348,7 @@ public class HostBasedPathProviderTests
         Assert.IsTrue(result1.IsSuccess);
         Assert.IsTrue(result2.IsSuccess);
         Assert.IsTrue(result3.IsSuccess);
-        
+
         // Host normalization should make these equivalent
         // (Though exact behavior may depend on implementation)
         Assert.IsNotNull(result1.Value);
@@ -425,11 +431,11 @@ public class HostBasedPathProviderTests
         var result = _provider.GetCacheFilePath(url);
 
         Assert.IsTrue(result.IsSuccess);
-        
+
         // The directory structure should be created
         var directoryPath = Path.GetDirectoryName(result.Value);
         Assert.IsNotNull(directoryPath);
-        
+
         // The method should be idempotent - calling it again should work
         var result2 = _provider.GetCacheFilePath(url);
         Assert.IsTrue(result2.IsSuccess);
@@ -455,7 +461,7 @@ public class HostBasedPathProviderTests
             var result = _provider.GetCacheFilePath(url);
 
             Assert.IsTrue(result.IsSuccess, $"Should handle URL: {urlString}");
-            Assert.IsTrue(result.Value.EndsWith(expectedExtension), 
+            Assert.IsTrue(result.Value.EndsWith(expectedExtension),
                 $"Expected path to end with {expectedExtension} but got: {result.Value}");
         }
     }
@@ -475,7 +481,7 @@ public class HostBasedPathProviderTests
     public void GetCacheFilePath_RequiresFileExtension_ValidExtensions()
     {
         var validExtensions = new[] { ".jpg", ".jpeg", ".png", ".gif", ".webp", ".mp4", ".webm" };
-        
+
         foreach (var ext in validExtensions)
         {
             var url = new Uri($"https://example.com/test{ext}");
