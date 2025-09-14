@@ -45,7 +45,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
 
         _disposed = true;
 
-        _logger.LogInformation("Disposing MediaCacheService - waiting for {Count} in-progress downloads",
+        _logger.LogInformation("Disposing MediaCacheService - waiting for {InProgressCount} in-progress downloads",
             _inProgressDownloads.Count);
 
         // Wait for in-progress downloads with timeout
@@ -67,7 +67,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
 
         _downloadSemaphore.Dispose();
         _inProgressDownloads.Clear();
-        _logger.LogInformation("MediaCacheService disposed");
+        _logger.LogInformation("MediaCacheService disposed successfully");
     }
 
     public async Task<Result<CachedMedia>> GetOrCacheAsync(Uri url, CancellationToken cancellationToken = default)
@@ -97,7 +97,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Failed to delete cache file: {FilePath}", file);
+                        _logger.LogWarning(ex, "Failed to delete cache file at path: {FilePath}", file);
                     }
 
                 // Remove empty directories
@@ -112,17 +112,17 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogWarning(ex, "Failed to delete empty directory: {DirectoryPath}", directory);
+                        _logger.LogWarning(ex, "Failed to delete empty directory at path: {DirectoryPath}", directory);
                     }
             });
 
             _inProgressDownloads.Clear();
-            _logger.LogInformation("Cache cleared successfully");
+            _logger.LogInformation("Cache cleared successfully from directory: {CacheDirectory}", _options.CacheDirectory);
             return Result.Success();
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to clear cache");
+            _logger.LogError(ex, "Failed to clear cache from directory: {CacheDirectory}", _options.CacheDirectory);
             return Result.Failure($"Failed to clear cache: {ex.Message}");
         }
     }
@@ -142,7 +142,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to calculate cache size");
+            _logger.LogError(ex, "Failed to calculate cache size for directory: {CacheDirectory}", _options.CacheDirectory);
             return Result.Failure<long>($"Failed to calculate cache size: {ex.Message}");
         }
     }
@@ -172,7 +172,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         // Check if file already exists in cache
         if (File.Exists(cacheFilePath))
         {
-            _logger.LogDebug("Cache hit for URL: {Url}", resolvedUrl);
+            _logger.LogDebug("Cache hit for URL: {Url} at path: {CacheFilePath}", resolvedUrl, cacheFilePath);
             return CreateCachedMediaFromFile(cacheFilePath);
         }
 
@@ -180,7 +180,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         var existingDownload = _inProgressDownloads.GetMaybe(urlKey);
         if (existingDownload.HasValue)
         {
-            _logger.LogDebug("Waiting for in-progress download: {Url}", resolvedUrl);
+            _logger.LogDebug("Waiting for in-progress download of URL: {Url}", resolvedUrl);
             return await existingDownload.Value;
         }
 
@@ -190,7 +190,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
 
         if (actualTask != downloadTask)
         {
-            _logger.LogDebug("Another download started while preparing: {Url}", resolvedUrl);
+            _logger.LogDebug("Another download started while preparing URL: {Url}", resolvedUrl);
             return await actualTask;
         }
 
@@ -210,7 +210,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         await _downloadSemaphore.WaitAsync(cancellationToken);
         try
         {
-            _logger.LogInformation("Downloading media from URL: {Url}", url);
+            _logger.LogInformation("Starting download of media from URL: {Url}", url);
 
             var tempFilePath = cacheFilePath + ".tmp";
             EnsureDirectoryExists(Path.GetDirectoryName(cacheFilePath)!);
@@ -270,12 +270,12 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
             var absolutePath = Path.GetFullPath(cacheFilePath);
             var cachedMedia = new CachedMedia(absolutePath, contentType, fileSize, DateTime.UtcNow);
 
-            _logger.LogInformation("Successfully cached media: {Url} ({Size} bytes)", url, fileSize);
+            _logger.LogInformation("Successfully cached media from URL: {Url} with size: {FileSize} bytes at path: {CacheFilePath}", url, fileSize, cacheFilePath);
             return Result.Success(cachedMedia);
         }
         catch (Exception ex)
         {
-            _logger.LogError(ex, "Failed to download and cache media: {Url}", url);
+            _logger.LogError(ex, "Failed to download and cache media from URL: {Url}", url);
 
             // Cleanup on failure
             try
@@ -289,7 +289,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
             }
             catch (Exception cleanupEx)
             {
-                _logger.LogWarning(cleanupEx, "Failed to cleanup failed download files for: {Url}", url);
+                _logger.LogWarning(cleanupEx, "Failed to cleanup failed download files for URL: {Url}", url);
             }
 
             return Result.Failure<CachedMedia>($"Failed to download media: {ex.Message}");
@@ -329,8 +329,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
 
     private void EnsureCacheDirectoryExists()
     {
-        if (!Directory.Exists(_options.CacheDirectory))
-            Directory.CreateDirectory(_options.CacheDirectory);
+        EnsureDirectoryExists(_options.CacheDirectory);
     }
 
     private static void EnsureDirectoryExists(string directoryPath)
@@ -363,7 +362,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         }
         catch (Exception ex)
         {
-            _logger.LogWarning(ex, "Failed to cleanup metadata file for: {CacheFilePath}", cacheFilePath);
+            _logger.LogWarning(ex, "Failed to cleanup metadata file for cache path: {CacheFilePath}", cacheFilePath);
         }
     }
     

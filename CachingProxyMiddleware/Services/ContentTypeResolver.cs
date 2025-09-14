@@ -44,4 +44,12 @@ public static class ContentTypeResolver
         return GetContentType(extension)
             .GetValueOrDefault(fallback);
     }
+
+    /// <summary>
+    ///     Gets all supported file extensions that have known content types.
+    /// </summary>
+    public static string[] GetSupportedExtensions()
+    {
+        return _contentTypeMap.Keys.ToArray();
+    }
 }

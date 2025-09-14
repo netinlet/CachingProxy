@@ -45,7 +45,7 @@ public class MediaProxyMiddleware
         await result.Match(
             async cachedMedia =>
             {
-                _logger.LogDebug("Serving cached media: {Url} -> {FilePath}", uriResult.Value, cachedMedia.FilePath);
+                _logger.LogDebug("Serving cached media from URL: {Url} at file path: {FilePath}", uriResult.Value, cachedMedia.FilePath);
 
                 context.Response.ContentType = cachedMedia.ContentType;
                 context.Response.ContentLength = cachedMedia.Size;
@@ -58,7 +58,7 @@ public class MediaProxyMiddleware
             },
             async error =>
             {
-                _logger.LogWarning("Failed to serve media for URL {Url}: {Error}", uriResult.Value, error);
+                _logger.LogWarning("Failed to serve media for URL: {Url} with error: {Error}", uriResult.Value, error);
 
                 context.Response.StatusCode = 502;
                 await context.Response.WriteAsync($"Failed to retrieve media: {error}");
