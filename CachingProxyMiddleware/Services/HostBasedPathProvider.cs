@@ -1,6 +1,7 @@
 using System.Text.RegularExpressions;
 using CachingProxyMiddleware.Interfaces;
 using CachingProxyMiddleware.Models;
+using CachingProxyMiddleware.Validators;
 using CSharpFunctionalExtensions;
 using Microsoft.Extensions.Options;
 
@@ -20,7 +21,7 @@ public partial class HostBasedPathProvider : IHostBasedPathProvider
 
     public Result<string> GetCacheFilePath(Uri url)
     {
-        return ValidateProxyUri(url)
+        return UriValidator.ValidateProxyUriWithFileExtension(url)
             .Bind(_ => GetHostDirectory(url))
             .Bind(hostDir => SanitizePath(url.AbsolutePath)
                 .Map(sanitizedPath => Path.Combine(hostDir, sanitizedPath.TrimStart('/'))));
@@ -28,7 +29,7 @@ public partial class HostBasedPathProvider : IHostBasedPathProvider
 
     public Result<string> GetHostDirectory(Uri url)
     {
-        return ValidateProxyUri(url)
+        return UriValidator.ValidateProxyUri(url)
             .Bind(_ => {
                 var hostWithPort = url.IsDefaultPort ? url.Host : $"{url.Host}:{url.Port}";
                 var sanitizedHost = SanitizeHost(hostWithPort);
@@ -38,35 +39,6 @@ public partial class HostBasedPathProvider : IHostBasedPathProvider
             });
     }
 
-    private static Result<Uri> ValidateProxyUri(Uri url)
-    {
-        if (url == null)
-            return Result.Failure<Uri>("URL cannot be null");
-
-        if (!url.IsAbsoluteUri)
-            return Result.Failure<Uri>("URL must be absolute, not relative. Only full HTTP/HTTPS URLs are accepted for proxying");
-
-        if (url.Scheme != "http" && url.Scheme != "https")
-            return Result.Failure<Uri>($"Only HTTP and HTTPS schemes are supported for proxying. Received: {url.Scheme}");
-
-        if (string.IsNullOrWhiteSpace(url.Host))
-            return Result.Failure<Uri>("URL must have a valid host");
-
-        // Validate that the path has a file extension (required for media proxy)
-        var path = url.AbsolutePath;
-        if (string.IsNullOrWhiteSpace(path) || path == "/")
-            return Result.Failure<Uri>("URL must contain a file path with extension. Root paths are not valid for media proxying");
-
-        var fileName = Path.GetFileName(path);
-        if (string.IsNullOrWhiteSpace(fileName))
-            return Result.Failure<Uri>("URL must contain a file name with extension");
-
-        var extension = Path.GetExtension(fileName);
-        if (string.IsNullOrWhiteSpace(extension))
-            return Result.Failure<Uri>("URL must contain a file with a valid extension. Files without extensions are not supported");
-
-        return Result.Success(url);
-    }
 
     private static Result<string> SanitizePath(string path)
     {

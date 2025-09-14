@@ -1,6 +1,7 @@
 using System.Collections.Concurrent;
 using CachingProxyMiddleware.Interfaces;
 using CachingProxyMiddleware.Models;
+using CachingProxyMiddleware.Validators;
 using CSharpFunctionalExtensions;
 using Microsoft.Extensions.Options;
 
@@ -118,22 +119,15 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
 
     private Result<Uri> ValidateMediaUrl(Uri url)
     {
-        if (url == null)
-            return Result.Failure<Uri>("URL cannot be null");
+        return UriValidator.ValidateProxyUri(url)
+            .Bind(ValidateMediaExtension);
+    }
 
-        if (!url.IsAbsoluteUri)
-            return Result.Failure<Uri>("URL must be absolute, not relative. Only full HTTP/HTTPS URLs are accepted for proxying");
-
-        if (url.Scheme != "http" && url.Scheme != "https")
-            return Result.Failure<Uri>($"Only HTTP and HTTPS schemes are supported for proxying. Received: {url.Scheme}");
-
-        if (string.IsNullOrWhiteSpace(url.Host))
-            return Result.Failure<Uri>("URL must have a valid host");
-
-        if (!IsValidMediaExtension(url.AbsolutePath))
-            return Result.Failure<Uri>($"URL does not have a supported media extension: {url}");
-
-        return Result.Success(url);
+    private Result<Uri> ValidateMediaExtension(Uri url)
+    {
+        return !IsValidMediaExtension(url.AbsolutePath)
+            ? Result.Failure<Uri>($"URL does not have a supported media extension: {url}")
+            : Result.Success(url);
     }
 
     private async Task<Result<CachedMedia>> GetOrDownloadMedia(Uri resolvedUrl, CancellationToken cancellationToken)
