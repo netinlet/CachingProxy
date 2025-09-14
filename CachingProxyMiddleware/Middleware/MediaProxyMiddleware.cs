@@ -1,3 +1,4 @@
+using CachingProxyMiddleware.Extensions;
 using CachingProxyMiddleware.Interfaces;
 using CSharpFunctionalExtensions;
 
@@ -5,9 +6,9 @@ namespace CachingProxyMiddleware.Middleware;
 
 public class MediaProxyMiddleware
 {
-    private readonly RequestDelegate _next;
     private readonly IMediaCacheService _cacheService;
     private readonly ILogger<MediaProxyMiddleware> _logger;
+    private readonly RequestDelegate _next;
 
     public MediaProxyMiddleware(
         RequestDelegate next,
@@ -30,41 +31,35 @@ public class MediaProxyMiddleware
             return;
         }
 
-        var urlParam = context.Request.Query["url"].ToString();
-        if (string.IsNullOrEmpty(urlParam))
+        var uriResult = context.GetQueryParameter("url").TryParseUri();
+
+        if (uriResult.IsFailure)
         {
             context.Response.StatusCode = 400;
-            await context.Response.WriteAsync("URL parameter is required");
+            await context.Response.WriteAsync(uriResult.Error);
             return;
         }
 
-        if (!Uri.TryCreate(urlParam, UriKind.Absolute, out var requestUri))
-        {
-            context.Response.StatusCode = 400;
-            await context.Response.WriteAsync("Invalid URL format");
-            return;
-        }
-
-        var result = await _cacheService.GetOrCacheAsync(requestUri, context.RequestAborted);
+        var result = await _cacheService.GetOrCacheAsync(uriResult.Value, context.RequestAborted);
 
         await result.Match(
             async cachedMedia =>
             {
-                _logger.LogDebug("Serving cached media: {Url} -> {FilePath}", requestUri, cachedMedia.FilePath);
-                
+                _logger.LogDebug("Serving cached media: {Url} -> {FilePath}", uriResult.Value, cachedMedia.FilePath);
+
                 context.Response.ContentType = cachedMedia.ContentType;
                 context.Response.ContentLength = cachedMedia.Size;
-                
+
                 // Add cache headers
                 context.Response.Headers.Append("Cache-Control", "public, max-age=31536000"); // 1 year
                 context.Response.Headers.Append("Last-Modified", cachedMedia.CachedAt.ToString("R"));
-                
+
                 await context.Response.SendFileAsync(cachedMedia.FilePath);
             },
             async error =>
             {
-                _logger.LogWarning("Failed to serve media for URL {Url}: {Error}", requestUri, error);
-                
+                _logger.LogWarning("Failed to serve media for URL {Url}: {Error}", uriResult.Value, error);
+
                 context.Response.StatusCode = 502;
                 await context.Response.WriteAsync($"Failed to retrieve media: {error}");
             }

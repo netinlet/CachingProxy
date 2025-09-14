@@ -73,7 +73,7 @@ public class MediaCacheServiceConcurrencyTests
             .Returns(Result.Success(cacheFilePath));
 
         _mockHttpHandler.When(HttpMethod.Get, url.ToString())
-            .Respond(async request =>
+            .Respond(async _ =>
             {
                 Interlocked.Increment(ref downloadCount);
                 await Task.Delay(100); // Simulate network delay
@@ -497,7 +497,7 @@ public class MediaCacheServiceConcurrencyTests
             .Returns(Result.Success(cacheFilePath));
 
         _mockHttpHandler.When(HttpMethod.Get, url.ToString())
-            .Respond(async request =>
+            .Respond(async _ =>
             {
                 downloadStarted = true;
                 await Task.Delay(1000); // Long delay
@@ -516,8 +516,8 @@ public class MediaCacheServiceConcurrencyTests
         var requestTask = _service.GetOrCacheAsync(url, cts.Token);
         
         // Wait for download to start then cancel
-        while (!downloadStarted) await Task.Delay(10);
-        cts.Cancel();
+        while (!downloadStarted) await Task.Delay(10, cts.Token);
+        await cts.CancelAsync();
 
         // Assert
         var result = await requestTask;

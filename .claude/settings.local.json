@@ -28,7 +28,12 @@
       "Bash(sudo netstat:*)",
       "Bash(netstat:*)",
       "Bash(ss:*)",
-      "Bash(awk:*)"
+      "Bash(awk:*)",
+      "Bash(dotnet script:*)",
+      "Read(//tmp/**)",
+      "Bash(csc:*)",
+      "Bash(./test_filesystem_encoding.exe)",
+      "Bash(./debug_sanitize.exe)"
     ],
     "deny": [],
     "ask": []

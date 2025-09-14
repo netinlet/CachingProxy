@@ -1,8 +1,6 @@
 using CachingProxyMiddleware.Extensions;
 using CachingProxyMiddleware.Interfaces;
 using CachingProxyMiddleware.Middleware;
-using CSharpFunctionalExtensions;
-using HttpResult = Microsoft.AspNetCore.Http.IResult;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -27,7 +25,7 @@ app.MapGet("/proxy", async (string url, IMediaCacheService cacheService) =>
 
     if (result.IsSuccess)
         return Results.File(result.Value.FilePath, result.Value.ContentType);
-    
+
     return Results.Problem($"Failed to retrieve media: {result.Error}", statusCode: 502);
 });
 
@@ -35,20 +33,20 @@ app.MapGet("/proxy", async (string url, IMediaCacheService cacheService) =>
 app.MapPost("/cache/clear", async (IMediaCacheService cacheService) =>
 {
     var result = await cacheService.ClearCacheAsync();
-    
+
     if (result.IsSuccess)
         return Results.Ok(new { Message = "Cache cleared successfully" });
-    
+
     return Results.Problem($"Failed to clear cache: {result.Error}");
 });
 
 app.MapGet("/cache/size", async (IMediaCacheService cacheService) =>
 {
     var result = await cacheService.GetCacheSizeAsync();
-    
+
     if (result.IsSuccess)
         return Results.Ok(new { SizeBytes = result.Value, SizeMB = result.Value / (1024.0 * 1024.0) });
-    
+
     return Results.Problem($"Failed to get cache size: {result.Error}");
 });
 
@@ -56,14 +54,14 @@ app.MapGet("/cache/size", async (IMediaCacheService cacheService) =>
 app.MapGet("/health", () => Results.Ok(new { Status = "Healthy", Timestamp = DateTime.UtcNow }));
 
 // Info endpoint
-app.MapGet("/", () => Results.Ok(new 
-{ 
+app.MapGet("/", () => Results.Ok(new
+{
     Service = "Media Cache Proxy",
     Endpoints = new[]
     {
         "GET /proxy?url=<media-url> - Proxy and cache media",
         "GET /media?url=<media-url> - Alternative proxy endpoint (middleware)",
-        "POST /cache/clear - Clear all cached media", 
+        "POST /cache/clear - Clear all cached media",
         "GET /cache/size - Get total cache size",
         "GET /health - Health check"
     }

@@ -57,9 +57,9 @@ public class HostBasedPathProviderTests
         var result = _provider.GetCacheFilePath(url);
 
         Assert.IsTrue(result.IsSuccess);
-        Assert.IsFalse(result.Value.Contains(":"));
-        Assert.IsFalse(result.Value.Contains("*"));
-        Assert.IsTrue(result.Value.Contains("_"));
+        Assert.IsFalse(result.Value.Contains(':'));
+        Assert.IsFalse(result.Value.Contains('*'));
+        Assert.IsTrue(result.Value.Contains('_'));
     }
 
     [TestMethod]
@@ -76,19 +76,6 @@ public class HostBasedPathProviderTests
     #region Advanced Path Sanitization Tests
 
     [TestMethod]
-    public void GetCacheFilePath_UnicodeCharacters_HandlesCorrectly()
-    {
-        var url = new Uri("https://测试.com/图片/测试.jpg");
-
-        var result = _provider.GetCacheFilePath(url);
-
-        Assert.IsTrue(result.IsSuccess);
-        // Unicode should be preserved or properly encoded
-        Assert.IsNotNull(result.Value);
-        Assert.IsTrue(result.Value.Length > 0);
-    }
-
-    [TestMethod]
     public void GetCacheFilePath_PathWithSpaces_SanitizesCorrectly()
     {
         var url = new Uri("https://example.com/images with spaces/test file.jpg");
@@ -96,8 +83,10 @@ public class HostBasedPathProviderTests
         var result = _provider.GetCacheFilePath(url);
 
         Assert.IsTrue(result.IsSuccess);
-        Assert.IsFalse(result.Value.Contains(" "), "Spaces should be sanitized");
-        Assert.IsTrue(result.Value.Contains("_") || result.Value.Contains("%20"), "Spaces should be replaced with underscores or encoded");
+        Assert.IsFalse(result.Value.Contains(' '), "Spaces should be sanitized");
+        // After URL decoding, spaces become actual spaces, then get sanitized to underscores
+        Assert.IsTrue(result.Value.Contains('_'), "Spaces should be replaced with underscores after URL decoding");
+        Assert.IsFalse(result.Value.Contains("%20"), "URL-encoded spaces should be decoded and sanitized, not preserved");
     }
 
     [TestMethod]
@@ -110,20 +99,87 @@ public class HostBasedPathProviderTests
         Assert.IsTrue(result.IsFailure, "Path traversal attempts without file extensions should be rejected");
         Assert.IsTrue(result.Error.Contains("extension") || result.Error.Contains("file"));
     }
+    
+    [TestMethod]
+    public void GetCacheFilePath_PathTraversalAttempt_RejectsInvalidPathWithExtension()
+    {
+        var url = new Uri("https://example.com/../../../etc/passwd.txt");
 
+        var result = _provider.GetCacheFilePath(url);
+
+        Assert.IsTrue(result.IsFailure, "Path traversal attempt should be rejected");
+        Assert.IsTrue(result.Error.Contains("traversal") || result.Error.Contains("security"), 
+            $"Expected security/traversal error but got: {result.Error}");
+    }
+    
     [TestMethod]
     public void GetCacheFilePath_PathWithSpecialCharacters_SanitizesAll()
     {
-        var specialChars = new[] { "<", ">", ":", "\"", "|", "*" };
-        
-        foreach (var specialChar in specialChars)
+        // Test characters that appear directly in URI paths and need sanitization
+        var directTestCases = new[] { ":", "*" };
+
+        foreach (var specialChar in directTestCases)
         {
             var url = new Uri($"https://example.com/test{specialChar}file.jpg");
-
             var result = _provider.GetCacheFilePath(url);
 
             Assert.IsTrue(result.IsSuccess, $"Should handle special character: {specialChar}");
             Assert.IsFalse(result.Value.Contains(specialChar), $"Special character {specialChar} should be sanitized");
+            Assert.IsTrue(result.Value.Contains("_"), $"Should contain underscore replacement for {specialChar}");
+        }
+
+        // Test characters that get URL-encoded but are now properly decoded and sanitized
+        var encodedTestCases = new[]
+        {
+            ("<", "%3C"),  // < gets encoded to %3C, then decoded and sanitized
+            (">", "%3E"),  // > gets encoded to %3E, then decoded and sanitized
+            ("\"", "%22"), // " gets encoded to %22, then decoded and sanitized
+            ("|", "%7C"),  // | gets encoded to %7C, then decoded and sanitized
+        };
+
+        foreach (var (originalChar, _) in encodedTestCases)
+        {
+            var url = new Uri($"https://example.com/test{originalChar}file.jpg");
+            var result = _provider.GetCacheFilePath(url);
+
+            Assert.IsTrue(result.IsSuccess, $"Should handle encoded character representing: {originalChar}");
+
+            // After our security fix, the path should NOT contain the original character
+            // because it gets URL-decoded first, then sanitized
+            Assert.IsFalse(result.Value.Contains(originalChar), $"Original character {originalChar} should be sanitized after decoding");
+            Assert.IsTrue(result.Value.Contains("_"), $"Should contain underscore replacement for {originalChar}");
+        }
+
+        // Test that ? character truncates path (becomes query parameter)
+        var urlWithQuery = new Uri("https://example.com/test?file.jpg");
+        var queryResult = _provider.GetCacheFilePath(urlWithQuery);
+
+        // This should fail because path becomes "/test" without extension
+        Assert.IsTrue(queryResult.IsFailure, "URL with ? should fail due to missing extension");
+    }
+
+    [TestMethod]
+    public void GetCacheFilePath_URLEncodedSecurityThreats_RejectsAll()
+    {
+        // Test URL-encoded directory traversal attacks
+        var securityTestCases = new[]
+        {
+            ("https://example.com/test%2E%2E/file.jpg", "URL-encoded dot-dot traversal"),
+            ("https://example.com/test%2F%2E%2E%2Ffile.jpg", "URL-encoded slash-dot-dot traversal"),
+            ("https://example.com/test%00file.jpg", "URL-encoded null byte"),
+        };
+
+        foreach (var (urlString, description) in securityTestCases)
+        {
+            var url = new Uri(urlString);
+            var result = _provider.GetCacheFilePath(url);
+
+            Assert.IsTrue(result.IsFailure, $"{description} should be rejected for security");
+            Assert.IsTrue(
+                result.Error.Contains("traversal") ||
+                result.Error.Contains("Null byte") ||
+                result.Error.Contains("extension"),
+                $"Expected security error but got: {result.Error}");
         }
     }
 

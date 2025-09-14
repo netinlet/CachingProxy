@@ -1,4 +1,6 @@
 using System.Collections.Concurrent;
+using System.Text.Json;
+using CachingProxyMiddleware.Extensions;
 using CachingProxyMiddleware.Interfaces;
 using CachingProxyMiddleware.Models;
 using CachingProxyMiddleware.Validators;
@@ -9,13 +11,13 @@ namespace CachingProxyMiddleware.Services;
 
 public class MediaCacheService : IMediaCacheService, IAsyncDisposable
 {
-    private readonly MediaCacheOptions _options;
+    private readonly SemaphoreSlim _downloadSemaphore;
     private readonly HttpClient _httpClient;
+    private readonly ConcurrentDictionary<string, Task<Result<CachedMedia>>> _inProgressDownloads;
+    private readonly ILogger<MediaCacheService> _logger;
+    private readonly MediaCacheOptions _options;
     private readonly IHostBasedPathProvider _pathProvider;
     private readonly IUrlResolver _urlResolver;
-    private readonly ILogger<MediaCacheService> _logger;
-    private readonly SemaphoreSlim _downloadSemaphore;
-    private readonly ConcurrentDictionary<string, Task<Result<CachedMedia>>> _inProgressDownloads;
     private volatile bool _disposed;
 
     public MediaCacheService(
@@ -34,6 +36,38 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         _inProgressDownloads = new ConcurrentDictionary<string, Task<Result<CachedMedia>>>();
 
         EnsureCacheDirectoryExists();
+    }
+
+    public async ValueTask DisposeAsync()
+    {
+        if (_disposed)
+            return;
+
+        _disposed = true;
+
+        _logger.LogInformation("Disposing MediaCacheService - waiting for {Count} in-progress downloads",
+            _inProgressDownloads.Count);
+
+        // Wait for in-progress downloads with timeout
+        var inProgressTasks = _inProgressDownloads.Values.ToArray();
+        if (inProgressTasks.Length > 0)
+            try
+            {
+                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+                await Task.WhenAll(inProgressTasks).WaitAsync(cts.Token);
+            }
+            catch (OperationCanceledException)
+            {
+                _logger.LogWarning("Timed out waiting for in-progress downloads during disposal");
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error waiting for in-progress downloads during disposal");
+            }
+
+        _downloadSemaphore.Dispose();
+        _inProgressDownloads.Clear();
+        _logger.LogInformation("MediaCacheService disposed");
     }
 
     public async Task<Result<CachedMedia>> GetOrCacheAsync(Uri url, CancellationToken cancellationToken = default)
@@ -57,7 +91,6 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
             {
                 var files = Directory.GetFiles(_options.CacheDirectory, "*", SearchOption.AllDirectories);
                 foreach (var file in files)
-                {
                     try
                     {
                         File.Delete(file);
@@ -66,14 +99,12 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
                     {
                         _logger.LogWarning(ex, "Failed to delete cache file: {FilePath}", file);
                     }
-                }
 
                 // Remove empty directories
                 var directories = Directory.GetDirectories(_options.CacheDirectory, "*", SearchOption.AllDirectories)
                     .OrderByDescending(d => d.Length); // Delete deepest first
 
                 foreach (var directory in directories)
-                {
                     try
                     {
                         if (!Directory.EnumerateFileSystemEntries(directory).Any())
@@ -83,7 +114,6 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
                     {
                         _logger.LogWarning(ex, "Failed to delete empty directory: {DirectoryPath}", directory);
                     }
-                }
             });
 
             _inProgressDownloads.Clear();
@@ -146,11 +176,12 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
             return CreateCachedMediaFromFile(cacheFilePath);
         }
 
-        // Check for in-progress download
-        if (_inProgressDownloads.TryGetValue(urlKey, out var existingDownload))
+        // Check for in-progress download using Maybe pattern
+        var existingDownload = _inProgressDownloads.GetMaybe(urlKey);
+        if (existingDownload.HasValue)
         {
             _logger.LogDebug("Waiting for in-progress download: {Url}", resolvedUrl);
-            return await existingDownload;
+            return await existingDownload.Value;
         }
 
         // Start new download
@@ -173,7 +204,8 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         }
     }
 
-    private async Task<Result<CachedMedia>> DownloadAndCacheMedia(Uri url, string cacheFilePath, CancellationToken cancellationToken)
+    private async Task<Result<CachedMedia>> DownloadAndCacheMedia(Uri url, string cacheFilePath,
+        CancellationToken cancellationToken)
     {
         await _downloadSemaphore.WaitAsync(cancellationToken);
         try
@@ -183,20 +215,43 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
             var tempFilePath = cacheFilePath + ".tmp";
             EnsureDirectoryExists(Path.GetDirectoryName(cacheFilePath)!);
 
-            using var response = await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
-            
-            if (!response.IsSuccessStatusCode)
-                return Result.Failure<CachedMedia>($"HTTP request failed with status {response.StatusCode}: {response.ReasonPhrase}");
+            using var response =
+                await _httpClient.GetAsync(url, HttpCompletionOption.ResponseHeadersRead, cancellationToken);
 
-            var contentType = response.Content.Headers.ContentType?.MediaType ?? "application/octet-stream";
+            if (!response.IsSuccessStatusCode)
+                return Result.Failure<CachedMedia>(
+                    $"HTTP request failed with status {response.StatusCode}: {response.ReasonPhrase}");
+
+            var contentType = response.Content.Headers.ContentType?.ToString() ?? "application/octet-stream";
             var contentLength = response.Content.Headers.ContentLength;
+            
+            // Collect headers for metadata
+            var headers = new Dictionary<string, string>();
+            
+            // Add Content-Type with full value (including charset)
+            if (response.Content.Headers.ContentType != null)
+                headers["Content-Type"] = response.Content.Headers.ContentType.ToString();
+            
+            // Add other important headers
+            foreach (var header in response.Headers)
+            {
+                if (IsImportantHeader(header.Key))
+                    headers[header.Key] = string.Join(", ", header.Value);
+            }
+            
+            foreach (var header in response.Content.Headers)
+            {
+                if (IsImportantContentHeader(header.Key) && !headers.ContainsKey(header.Key))
+                    headers[header.Key] = string.Join(", ", header.Value);
+            }
 
             if (contentLength.HasValue && contentLength.Value > _options.MaxFileSizeBytes)
-                return Result.Failure<CachedMedia>($"File size ({contentLength.Value} bytes) exceeds maximum allowed size ({_options.MaxFileSizeBytes} bytes)");
+                return Result.Failure<CachedMedia>(
+                    $"File size ({contentLength.Value} bytes) exceeds maximum allowed size ({_options.MaxFileSizeBytes} bytes)");
 
             await using var contentStream = await response.Content.ReadAsStreamAsync(cancellationToken);
             await using var fileStream = File.Create(tempFilePath);
-            
+
             await contentStream.CopyToAsync(fileStream, cancellationToken);
             await fileStream.FlushAsync(cancellationToken);
 
@@ -208,6 +263,9 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
 
             // Atomic rename to prevent race conditions
             File.Move(tempFilePath, cacheFilePath);
+            
+            // Save headers metadata
+            SaveHeadersMetadata(cacheFilePath, headers);
 
             var absolutePath = Path.GetFullPath(cacheFilePath);
             var cachedMedia = new CachedMedia(absolutePath, contentType, fileSize, DateTime.UtcNow);
@@ -218,7 +276,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         catch (Exception ex)
         {
             _logger.LogError(ex, "Failed to download and cache media: {Url}", url);
-            
+
             // Cleanup on failure
             try
             {
@@ -227,6 +285,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
                     File.Delete(tempFilePath);
                 if (File.Exists(cacheFilePath))
                     File.Delete(cacheFilePath);
+                CleanupMetadataFile(cacheFilePath);
             }
             catch (Exception cleanupEx)
             {
@@ -248,7 +307,8 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
             var fileInfo = new FileInfo(filePath);
             var contentType = GetContentTypeFromExtension(Path.GetExtension(filePath));
             var absolutePath = Path.GetFullPath(filePath);
-            return Result.Success(new CachedMedia(absolutePath, contentType, fileInfo.Length, fileInfo.CreationTimeUtc));
+            return Result.Success(new CachedMedia(absolutePath, contentType, fileInfo.Length,
+                fileInfo.CreationTimeUtc));
         }
         catch (Exception ex)
         {
@@ -264,24 +324,7 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
 
     private static string GetContentTypeFromExtension(string extension)
     {
-        return extension.ToLowerInvariant() switch
-        {
-            ".jpg" or ".jpeg" => "image/jpeg",
-            ".png" => "image/png",
-            ".gif" => "image/gif",
-            ".webp" => "image/webp",
-            ".svg" => "image/svg+xml",
-            ".bmp" => "image/bmp",
-            ".ico" => "image/x-icon",
-            ".mp4" => "video/mp4",
-            ".webm" => "video/webm",
-            ".avi" => "video/x-msvideo",
-            ".mov" => "video/quicktime",
-            ".mkv" => "video/x-matroska",
-            ".flv" => "video/x-flv",
-            ".wmv" => "video/x-ms-wmv",
-            _ => "application/octet-stream"
-        };
+        return ContentTypeResolver.GetContentTypeWithFallback(extension);
     }
 
     private void EnsureCacheDirectoryExists()
@@ -295,37 +338,58 @@ public class MediaCacheService : IMediaCacheService, IAsyncDisposable
         if (!Directory.Exists(directoryPath))
             Directory.CreateDirectory(directoryPath);
     }
-
-    public async ValueTask DisposeAsync()
+    
+    private void SaveHeadersMetadata(string cacheFilePath, Dictionary<string, string> headers)
     {
-        if (_disposed)
-            return;
-
-        _disposed = true;
-
-        _logger.LogInformation("Disposing MediaCacheService - waiting for {Count} in-progress downloads", _inProgressDownloads.Count);
-
-        // Wait for in-progress downloads with timeout
-        var inProgressTasks = _inProgressDownloads.Values.ToArray();
-        if (inProgressTasks.Length > 0)
+        if (headers.Count > 0)
         {
-            try
-            {
-                using var cts = new CancellationTokenSource(TimeSpan.FromSeconds(30));
-                await Task.WhenAll(inProgressTasks).WaitAsync(cts.Token);
-            }
-            catch (OperationCanceledException)
-            {
-                _logger.LogWarning("Timed out waiting for in-progress downloads during disposal");
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Error waiting for in-progress downloads during disposal");
-            }
+            var json = JsonSerializer.Serialize(headers);
+            File.WriteAllText(GetMetadataFilePath(cacheFilePath), json);
         }
-
-        _downloadSemaphore.Dispose();
-        _inProgressDownloads.Clear();
-        _logger.LogInformation("MediaCacheService disposed");
+    }
+    
+    private string GetMetadataFilePath(string cacheFilePath)
+    {
+        return cacheFilePath + ".meta";
+    }
+    
+    private void CleanupMetadataFile(string cacheFilePath)
+    {
+        try
+        {
+            var metadataPath = GetMetadataFilePath(cacheFilePath);
+            if (File.Exists(metadataPath))
+                File.Delete(metadataPath);
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(ex, "Failed to cleanup metadata file for: {CacheFilePath}", cacheFilePath);
+        }
+    }
+    
+    private static bool IsImportantHeader(string headerName)
+    {
+        return headerName.Equals("Accept-Ranges", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Language", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Expires", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Vary", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("X-Content-Type-Options", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("ETag", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Last-Modified", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Cache-Control", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Disposition", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Server", StringComparison.OrdinalIgnoreCase) ||
+               headerName.StartsWith("X-", StringComparison.OrdinalIgnoreCase);
+    }
+    
+    private static bool IsImportantContentHeader(string headerName)
+    {
+        return headerName.Equals("Content-Type", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Encoding", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Language", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Disposition", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Content-Length", StringComparison.OrdinalIgnoreCase) ||
+               headerName.Equals("Last-Modified", StringComparison.OrdinalIgnoreCase);
     }
 }
