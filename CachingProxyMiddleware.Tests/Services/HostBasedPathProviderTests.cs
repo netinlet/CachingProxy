@@ -57,9 +57,12 @@ public class HostBasedPathProviderTests
         var result = _provider.GetCacheFilePath(url);
 
         Assert.IsTrue(result.IsSuccess);
-        Assert.IsFalse(result.Value.Contains(':'));
-        Assert.IsFalse(result.Value.Contains('*'));
-        Assert.IsTrue(result.Value.Contains('_'));
+
+        // Check only the filename portion to avoid Windows drive letter issues (C:)
+        var filename = Path.GetFileName(result.Value);
+        Assert.IsFalse(filename.Contains(':'), "Filename should not contain ':' after sanitization");
+        Assert.IsFalse(filename.Contains('*'), "Filename should not contain '*' after sanitization");
+        Assert.IsTrue(filename.Contains('_'), "Filename should contain '_' replacements");
     }
 
     [TestMethod]
@@ -124,8 +127,11 @@ public class HostBasedPathProviderTests
             var result = _provider.GetCacheFilePath(url);
 
             Assert.IsTrue(result.IsSuccess, $"Should handle special character: {specialChar}");
-            Assert.IsFalse(result.Value.Contains(specialChar), $"Special character {specialChar} should be sanitized");
-            Assert.IsTrue(result.Value.Contains("_"), $"Should contain underscore replacement for {specialChar}");
+
+            // Check only the filename portion to avoid Windows drive letter issues (C:)
+            var filename = Path.GetFileName(result.Value);
+            Assert.IsFalse(filename.Contains(specialChar), $"Filename should not contain special character {specialChar} after sanitization");
+            Assert.IsTrue(filename.Contains("_"), $"Filename should contain underscore replacement for {specialChar}");
         }
 
         // Test characters that get URL-encoded but are now properly decoded and sanitized
@@ -144,10 +150,11 @@ public class HostBasedPathProviderTests
 
             Assert.IsTrue(result.IsSuccess, $"Should handle encoded character representing: {originalChar}");
 
-            // After our security fix, the path should NOT contain the original character
+            // After our security fix, the filename should NOT contain the original character
             // because it gets URL-decoded first, then sanitized
-            Assert.IsFalse(result.Value.Contains(originalChar), $"Original character {originalChar} should be sanitized after decoding");
-            Assert.IsTrue(result.Value.Contains("_"), $"Should contain underscore replacement for {originalChar}");
+            var filename = Path.GetFileName(result.Value);
+            Assert.IsFalse(filename.Contains(originalChar), $"Filename should not contain original character {originalChar} after sanitization");
+            Assert.IsTrue(filename.Contains("_"), $"Filename should contain underscore replacement for {originalChar}");
         }
 
         // Test that ? character truncates path (becomes query parameter)
