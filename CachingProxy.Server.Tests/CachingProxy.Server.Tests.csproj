@@ -18,8 +18,4 @@
         <Using Include="Microsoft.VisualStudio.TestTools.UnitTesting"/>
     </ItemGroup>
 
-    <ItemGroup>
-        <ProjectReference Include="..\CachingProxy.Server\CachingProxy.Server.csproj"/>
-    </ItemGroup>
-
 </Project>
