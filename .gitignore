@@ -1,11 +1,37 @@
+# Build outputs
 bin/
 obj/
 /packages/
+
+# IDE files
 riderModule.iml
 /_ReSharper.Caches/
+.idea/
+.vs/
+*.DotSettings.user
+*.user
+*.suo
 
-# Cache directory - don't version cached content
+# Cache directories - don't version cached content
 cache/
 */cache/
-CachingProxy.Server/cache/
 **/cache/**
+CachingProxy.Server/cache/
+media-cache/
+*/media-cache/
+**/media-cache/**
+static-cache/
+*/static-cache/
+**/static-cache/**
+
+# Logs and temporary files
+*.log
+*.tmp
+*.temp
+
+# Environment-specific configs (may contain secrets)
+appsettings.Production.json
+appsettings.Staging.json
+
+# Claude Code
+.claude/

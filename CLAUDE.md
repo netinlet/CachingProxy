@@ -58,71 +58,69 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project Overview
 
-This is a caching proxy system built with ASP.NET Core and .NET 9.0 consisting of three main projects:
+This is a media caching proxy middleware built with ASP.NET Core and .NET 9.0 consisting of two main projects:
 
-1. **CachingProxy.Server**: Main HTTP proxy server with full caching capabilities
-2. **CachingProxyMiddleware**: Minimal middleware-only project template  
-3. **ExampleServer**: Basic example/test server for development
+1. **CachingProxyMiddleware**: Complete media caching proxy with middleware and API endpoints
+2. **CachingProxyMiddleware.Tests**: Comprehensive test suite with 11 test files
 
-The system intercepts HTTP requests, caches responses to disk using atomic file operations, and serves subsequent requests from cache. The system uses request deduplication to prevent race conditions when multiple clients request the same uncached resource simultaneously.
+The system intercepts HTTP requests for media files, caches them to disk using atomic file operations, and serves subsequent requests from cache. The system uses request deduplication to prevent race conditions when multiple clients request the same uncached resource simultaneously.
 
 ## Project Structure
 
-- **CachingProxy.Server**: Complete HTTP proxy server with both general URL caching (`/proxy`) and static file middleware (`/static/*`)
-- **CachingProxy.Server.Tests**: Comprehensive test suite with 51+ tests covering all caching scenarios
-- **CachingProxyMiddleware**: Minimal project template containing only basic middleware setup and CSharpFunctionalExtensions dependency
-- **ExampleServer**: Simple "Hello World" server for testing and development purposes
-- **CachingProxyMiddware.Tests**: Additional test project for middleware-specific functionality
+- **CachingProxyMiddleware**: Complete media caching proxy with:
+  - `Services/MediaCacheService.cs`: Core caching logic with request deduplication
+  - `Middleware/MediaProxyMiddleware.cs`: ASP.NET Core middleware for `/media` endpoint
+  - `Models/`: Configuration options and data models
+  - `Interfaces/`: Service abstractions
+  - `Extensions/`: Helper extensions for DI and HTTP context
+  - `Validators/`: URI validation logic
+  - `Program.cs`: Minimal API with `/proxy` endpoint and cache management
+- **CachingProxyMiddleware.Tests**: Comprehensive test suite with 11 test files covering media caching, race conditions, and middleware integration
 
 ## Architecture
 
 ### Core Components
 
-**CachingProxy** (`CachingProxy.Server/CachingProxy.cs`)
-- Main caching logic with two-phase approach:
-  - `ValidateAndPrepareAsync()`: Performs HEAD request to validate origin and prepare headers
-  - `ServeAsync()`: Serves content from cache or fetches from origin using atomic file operations
-- Race condition prevention through request deduplication using `ConcurrentDictionary<string, Task<ProxyResponse>>`
-- Downloads to temporary files with atomic rename to prevent cache corruption
-- Preserves HTTP headers (ETag, Last-Modified, Cache-Control, etc.) in JSON metadata files
-- Handles HTTP status codes including 304 Not Modified as success for caching scenarios
+**MediaCacheService** (`Services/MediaCacheService.cs`)
+- Main caching logic with request deduplication using `ConcurrentDictionary<string, Task<Result<CachedMedia>>>`
+- Downloads to temporary files (`.tmp`) with atomic rename to prevent cache corruption
+- Preserves HTTP headers (ETag, Last-Modified, Cache-Control, etc.) in JSON metadata files (`.meta`)
+- Validates media URLs and file extensions before caching
 - Implements `IAsyncDisposable` for proper resource cleanup
-
-**HTTP API** (`CachingProxy.Server/Program.cs`)
-- Minimal API with `/proxy` endpoint that accepts URL parameter
-- Two-phase response handling to prevent "response already started" exceptions
-- CORS support and comprehensive header preservation
-- Additional endpoints: `/health`, `/config`, `/clear`, `/`
-
-**StaticFileProxyService** (`CachingProxy.Server/StaticFileProxyService.cs`)
-- Handles static file caching with configurable allowed extensions
-- Downloads files from configurable base URL to local cache
-- Request deduplication for static files using `ConcurrentDictionary<string, Task<bool>>`
+- Uses CSharpFunctionalExtensions Result<T> for robust error handling
 - Semaphore-controlled concurrent downloads
 
-**StaticFileProxyMiddleware** (`CachingProxy.Server/StaticFileProxyMiddleware.cs`)
-- ASP.NET Core middleware for intercepting `/static/*` requests
+**MediaProxyMiddleware** (`Middleware/MediaProxyMiddleware.cs`)
+- ASP.NET Core middleware for intercepting `/media` requests
 - Serves from cache first, downloads on cache miss
 - Proper content-type detection and HTTP headers
+- Request cancellation support
+
+**HTTP API** (`Program.cs`)
+- Minimal API with `/proxy` endpoint that accepts URL parameter
+- Cache management endpoints: `/cache/clear`, `/cache/size`
+- Health check endpoint: `/health`
+- Service information endpoint: `/`
+
+**HostBasedPathProvider** (`Services/HostBasedPathProvider.cs`)
+- Generates cache file paths based on URL host and path
+- Handles special character substitution for filesystem compatibility
+- Truncates and hashes long filenames to avoid filesystem limits
+
+**DefaultUrlResolver** (`Services/DefaultUrlResolver.cs`)
+- Resolves and validates URLs for caching
+- Handles URL normalization and validation
 
 ### Configuration
 
-Configuration is managed through two options classes in appsettings.json:
+Configuration is managed through the MediaCacheOptions class in appsettings.json:
 
-**CachingProxyOptions** ("CachingProxy" section):
-- `CacheDirectory`: Local cache storage location (default: "./cache")
-- `MaxCacheFileSizeMB`: Maximum cached file size (default: 100MB)
-- `CacheRetentionDays`: Cache retention period (default: 7 days)
+**MediaCacheOptions** ("MediaCache" section):
+- `CacheDirectory`: Local cache storage location (default: "./media-cache")
+- `MaxFileSizeBytes`: Maximum cached file size (default: 100MB)
 - `HttpTimeout`: HTTP client timeout (default: 2 minutes)
 - `MaxConcurrentDownloads`: Maximum number of concurrent downloads (default: 10)
-- `InProgressRequestTimeout`: Timeout for waiting on in-progress requests (default: 5 minutes)
-
-**StaticFileProxyOptions** ("StaticFileProxy" section):
-- `BaseUrl`: Origin server for static files (default: "https://example.com")
-- `StaticCacheDirectory`: Local static cache storage location (default: "./static-cache")
-- `HttpTimeout`: HTTP client timeout (default: 2 minutes)
-- `MaxConcurrentDownloads`: Maximum concurrent static file downloads (default: 10)
-- `AllowedExtensions`: Allowed file extensions (default: [".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg"])
+- `AllowedExtensions`: Supported media file extensions (default: images, videos, audio files)
 
 ### Caching Strategy
 
@@ -148,25 +146,19 @@ dotnet test
 dotnet test --verbosity normal
 
 # Run specific test class
-dotnet test --filter "FullyQualifiedName~CachingProxyTests"
+dotnet test --filter "FullyQualifiedName~MediaCacheServiceTests"
 
 # Run specific test method
-dotnet test --filter "FullyQualifiedName~CachingProxyTests.ServeAsync_SimultaneousRequests_OnlyOneDownloadOccurs"
+dotnet test --filter "FullyQualifiedName~MediaCacheServiceTests.GetOrCacheAsync_SimultaneousRequests_OnlyOneDownloadOccurs"
 ```
 
 ### Running the Applications
 ```bash
-# Run the main server (development)
-dotnet run --project CachingProxy.Server
-
-# Run the middleware-only project
+# Run the main application (development)
 dotnet run --project CachingProxyMiddleware
 
-# Run the example server (for testing)
-dotnet run --project ExampleServer
-
 # Run with specific configuration
-dotnet run --project CachingProxy.Server --environment Development
+dotnet run --project CachingProxyMiddleware --environment Development
 ```
 
 ### Cache Management
@@ -182,27 +174,24 @@ dotnet clean
 
 The test suite uses MSTest with NSubstitute for mocking and RichardSzalay.MockHttp for HTTP client testing:
 
-- **CachingProxyTests.cs**: 51 comprehensive tests covering HTTP caching, status codes, headers, race conditions, and edge cases
-- **StaticFileProxyServiceTests.cs**: Tests for static file proxy functionality
-- **StaticFileProxyMiddlewareTests.cs**: Middleware integration tests
-- **StaticFileProxyMiddlewareSimpleTests.cs**: Simple middleware behavior tests
+- **MediaCacheServiceTests.cs**: Core media caching functionality tests
+- **MediaProxyMiddlewareTests.cs**: Middleware integration tests
+- **HostBasedPathProviderTests.cs**: Cache file path generation tests
+- **DefaultUrlResolverTests.cs**: URL resolution and validation tests
+- **ContentTypeResolverTests.cs**: Content type detection tests
+- **UriValidatorTests.cs**: URI validation tests
+- Additional test files covering extensions, configuration, and edge cases
 
 Tests use temporary cache directories and mock HTTP handlers to avoid external dependencies. Race condition tests specifically verify request deduplication and concurrent download limits work correctly.
 
 ## Key Implementation Details
 
-- HTTP 304 Not Modified is treated as success for caching proxy scenarios
-- Stream disposal is handled carefully to avoid "closed stream" exceptions in tests
-- Content-Type headers may include charset parameters from MockHttp in tests
-- Redirect status codes (3xx) are treated as failures (not followed automatically)
-- All logging uses structured logging with ILogger<T>
+- Uses atomic file operations to prevent cache corruption during concurrent access
+- Request deduplication prevents multiple downloads of the same resource
+- Media file extension validation ensures only supported types are cached
+- Stream disposal handled carefully to avoid "closed stream" exceptions
+- Content-Type headers include charset parameters when provided by origin
 - Error handling includes cleanup of partial cache files on failures
-
-## Archived Components
-
-The `archive/` directory contains components that were removed from the main codebase but preserved for potential reuse:
-
-- **TeeStream** (`archive/impl/TeeStream.cs`): A duplex stream implementation that writes to two streams simultaneously. Originally used for simultaneous client response + caching, but removed when the architecture changed to atomic file operations for race condition prevention.
-- **TeeStream Tests** (`archive/tests/TeeStreamTests.cs`): 21 comprehensive tests for the TeeStream functionality.
-
-See `archive/README.md` for detailed information about archived components and their potential reuse scenarios.
+- All logging uses structured logging with ILogger<T>
+- HTTP status code validation ensures only successful responses are cached
+- Uses CSharpFunctionalExtensions Result<T> for robust error handling throughout
