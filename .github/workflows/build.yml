@@ -2,9 +2,9 @@ name: Build and Test
 
 on:
   push:
-    branches: [ main, develop, proxy-cleanup ]
+    branches: [ main, dev ]
   pull_request:
-    branches: [ main, develop ]
+    branches: [ main, dev ]
 
 jobs:
   build:
