@@ -1,237 +1,207 @@
-# CachingProxy Performance Test Suite
+# CachingProxyMiddleware
 
-Simple shell scripts for testing the performance and behavior of the CachingProxy using external tools.
+A high-performance media caching proxy middleware for ASP.NET Core built with .NET 9.0. This system intercepts HTTP requests for media files, caches them to disk using atomic file operations, and serves subsequent requests from cache with request deduplication to prevent race conditions.
 
-## Prerequisites
+## Features
 
-- CachingProxy server running on `http://localhost:5150`
-- `curl` command available
-- `bc` calculator (optional, for enhanced statistics)
-- Bash shell
+- **Media-Focused Caching**: Optimized for common media file types (images, videos, audio)
+- **Race Condition Prevention**: Request deduplication ensures only one download per URL occurs simultaneously
+- **Atomic File Operations**: Downloads to temporary files with atomic rename to prevent cache corruption
+- **Header Preservation**: Maintains HTTP headers (ETag, Last-Modified, Cache-Control, etc.) in JSON metadata files
+- **Configurable Limits**: Maximum file size, concurrent downloads, and cache retention controls
+- **Comprehensive Testing**: 11 test files covering caching scenarios, race conditions, and edge cases
+- **Result Pattern**: Uses CSharpFunctionalExtensions Result<T> for robust error handling
 
 ## Quick Start
 
-1. **Start the CachingProxy server:**
-   ```bash
-   dotnet run --project CachingProxy.Server
-   ```
+### Running the Application
 
-2. **Run the performance tests:**
-   ```bash
-   # Basic cache performance test
-   ./perf-test.sh
-   
-   # Concurrency and race condition test  
-   ./concurrency-test.sh
-   
-   # Load testing (default: 100 requests, 5 concurrent)
-   ./load-test.sh
-   
-   # Load testing with custom parameters
-   ./load-test.sh 500 10  # 500 requests, 10 concurrent
-   ```
-
-## Test Scripts
-
-### 1. perf-test.sh - Cache Performance Test
-
-**Purpose:** Measures the performance difference between cache misses and cache hits.
-
-**What it does:**
-- Clears the cache
-- Makes a request (cache miss) and measures response time
-- Makes the same request again (cache hit) and measures response time
-- Compares the two times and calculates improvement
-
-**Sample Output:**
-```
-=== CachingProxy Performance Test ===
-🔍 Testing Cache MISS (first request)...
-time_total: 0.751s
-
-⚡ Testing Cache HIT (second request)...
-time_total: 0.003s
-
-📊 Performance Comparison:
-Cache MISS time: 0.751s
-Cache HIT time:  0.003s
-Improvement: 99.60% faster
-Speedup: 250.33x faster
-✅ Cache is working - hit is faster than miss
-```
-
-### 2. concurrency-test.sh - Race Condition Test
-
-**Purpose:** Tests the proxy's ability to handle simultaneous requests for the same uncached resource.
-
-**What it does:**
-- Clears the cache
-- Launches 10 simultaneous requests for the same slow endpoint (`/delay/2`)
-- Analyzes whether request coalescing is working properly
-- Checks if all responses are identical (indicating proper caching)
-
-**Expected Behavior:**
-- One request should take ~2 seconds (waiting for origin)
-- Other requests should complete much faster (served from cache)
-- All responses should be identical
-
-**Sample Output:**
-```
-=== CachingProxy Concurrency Test ===
-🚀 Launching 10 simultaneous requests...
-✅ All requests completed in 2.15s
-
-📊 Results Analysis:
-Successful responses: 10/10
-Identical responses: 10/10
-✅ All responses identical - proper request coalescing/caching
-
-⏱️ Request Timing Analysis:
-Fastest request: 2.01s
-Slowest request: 2.11s
-```
-
-### 3. load-test.sh - Load Testing
-
-**Purpose:** Tests the proxy under sustained load with mixed cache hits and misses.
-
-**Usage:**
 ```bash
-./load-test.sh [total_requests] [concurrent_requests]
+# Build the solution
+dotnet build
 
-# Examples:
-./load-test.sh           # 100 requests, 5 concurrent (default)
-./load-test.sh 500       # 500 requests, 5 concurrent  
-./load-test.sh 1000 20   # 1000 requests, 20 concurrent
+# Run the main application
+dotnet run --project CachingProxyMiddleware
+
+# Run tests
+dotnet test
 ```
 
-**What it does:**
-- Cycles through different URLs from `test-urls.txt`
-- Maintains controlled concurrency level
-- Tracks success/failure rates
-- Measures response times and throughput
-- Saves detailed results to CSV file
+### Basic Usage
 
-**Sample Output:**
-```
-=== CachingProxy Load Test ===
-Total requests: 100
-Concurrent requests: 5
+The service provides both API endpoints and middleware functionality:
 
-✅ Load test completed in 15.23s
-
-📊 Results Analysis:
-Successful requests: 98
-Failed requests: 2
-Success rate: 98.00%
-Average throughput: 6.57 requests/second
-
-⏱️ Timing Analysis:
-Fastest request: 0.002s
-Slowest request: 2.15s
-Average response time: 0.34s
-
-💾 Detailed results saved to: load_test_results_20250906_163045.csv
-```
-
-## Supporting Files
-
-### curl-format.txt
-Custom curl output format for consistent timing measurements. Provides detailed timing breakdown including:
-- DNS lookup time
-- Connection time  
-- Transfer start time
-- Total time
-- Download size and speed
-- HTTP response code
-
-### test-urls.txt
-Collection of test URLs with different characteristics:
-- **Small JSON responses** - Fast cache testing
-- **Medium responses** - Typical API responses
-- **Delayed responses** - Concurrency testing (`/delay/1`, `/delay/2`, etc.)
-- **Different content types** - XML, HTML, plain text
-- **Large responses** - Performance testing with bigger payloads
-- **Dynamic responses** - Different each time (UUID, IP)
-
-## Interpreting Results
-
-### Performance Test Results
-- **Large difference between miss and hit**: Cache is working effectively
-- **Small difference**: May indicate network is very fast, or cache overhead
-- **Hit slower than miss**: Possible cache corruption or disk I/O issues
-
-### Concurrency Test Results
-- **One slow request + many fast**: Request coalescing working properly
-- **All requests slow**: Race condition - multiple origin requests happening
-- **Different response content**: Cache corruption or race condition
-
-### Load Test Results
-- **High success rate (>95%)**: Good reliability
-- **Consistent response times**: Stable performance
-- **High throughput**: Good scalability
-- **Low cache hit ratio**: May need cache warming or better URL distribution
-
-## Troubleshooting
-
-### "Proxy is not running" Error
+**API Endpoint:**
 ```bash
-# Start the proxy server
-cd CachingProxy.Server
-dotnet run
+curl "http://localhost:5000/proxy?url=https://example.com/image.jpg"
 ```
 
-### "bc: command not found" Warning
-Install `bc` for enhanced statistics:
+**Middleware Route:**
 ```bash
-# Ubuntu/Debian
-sudo apt-get install bc
-
-# macOS
-brew install bc
-
-# The scripts will work without bc, just with less detailed calculations
+curl "http://localhost:5000/media?url=https://example.com/image.jpg"
 ```
 
-### Permission Denied
-Make scripts executable:
+**Cache Management:**
 ```bash
-chmod +x *.sh
+# Clear cache
+curl -X POST http://localhost:5000/cache/clear
+
+# Get cache size
+curl http://localhost:5000/cache/size
+
+# Health check
+curl http://localhost:5000/health
 ```
 
-### High Error Rates in Load Tests
-- Check proxy server logs for errors
-- Reduce concurrency level
-- Verify test URLs are accessible
-- Check network connectivity
+## Project Structure
 
-## Customization
+### Main Application (`CachingProxyMiddleware/`)
 
-### Adding New Test URLs
-Edit `test-urls.txt` to add your own test endpoints:
+- **Program.cs**: ASP.NET Core startup with minimal API endpoints and middleware configuration
+- **Services/MediaCacheService.cs**: Core caching logic with two-phase approach and request deduplication
+- **Middleware/MediaProxyMiddleware.cs**: ASP.NET Core middleware for intercepting `/media/*` requests
+- **Models/MediaCacheOptions.cs**: Configuration options with defaults
+- **Models/CachedMedia.cs**: Data model for cached media information
+- **Interfaces/**: Service abstractions (IMediaCacheService, IUrlResolver, IHostBasedPathProvider)
+- **Extensions/**: Helper extensions for dependency injection and HTTP context
+- **Validators/**: URI validation logic
+- **Services/**: Supporting services (ContentTypeResolver, DefaultUrlResolver, HostBasedPathProvider)
+
+### Test Suite (`CachingProxyMiddleware.Tests/`)
+
+Comprehensive test coverage with 11 test files using MSTest, NSubstitute, and RichardSzalay.MockHttp:
+- Media caching functionality tests
+- Middleware integration tests
+- Race condition and concurrency tests
+- Configuration and validation tests
+- Error handling and edge case tests
+
+## Configuration
+
+Configure the service in `appsettings.json`:
+
+```json
+{
+  "MediaCache": {
+    "CacheDirectory": "./media-cache",
+    "HttpTimeout": "00:02:00",
+    "MaxConcurrentDownloads": 10,
+    "MaxFileSizeBytes": 104857600,
+    "AllowedExtensions": [
+      ".jpg", ".jpeg", ".png", ".gif", ".webp", ".svg",
+      ".mp4", ".webm", ".mov", ".avi",
+      ".mp3", ".wav", ".ogg", ".m4a"
+    ]
+  }
+}
+```
+
+### Configuration Options
+
+- **CacheDirectory**: Local cache storage location (default: "./media-cache")
+- **HttpTimeout**: HTTP client timeout (default: 2 minutes)
+- **MaxConcurrentDownloads**: Maximum concurrent downloads (default: 10)
+- **MaxFileSizeBytes**: Maximum cached file size (default: 100MB)
+- **AllowedExtensions**: Supported media file extensions
+
+## Architecture
+
+### Core Components
+
+**MediaCacheService** (`Services/MediaCacheService.cs`)
+- Main caching logic with atomic file operations
+- Request deduplication using `ConcurrentDictionary<string, Task<Result<CachedMedia>>>`
+- Downloads to temporary files (`.tmp`) with atomic rename
+- Preserves HTTP headers in JSON metadata files (`.meta`)
+- Implements `IAsyncDisposable` for proper resource cleanup
+- Uses CSharpFunctionalExtensions Result<T> for error handling
+
+**MediaProxyMiddleware** (`Middleware/MediaProxyMiddleware.cs`)
+- ASP.NET Core middleware for intercepting `/media` requests
+- Serves from cache first, downloads on cache miss
+- Proper content-type detection and HTTP headers
+- Request cancellation support
+
+**HostBasedPathProvider** (`Services/HostBasedPathProvider.cs`)
+- Generates cache file paths based on URL host and path
+- Handles special character substitution for filesystem compatibility
+- Truncates and hashes long filenames to avoid filesystem limits
+
+### Caching Strategy
+
+- Cache files named using URL host + path with special character substitution
+- Long filenames truncated and hashed to avoid filesystem limits
+- Metadata stored as `<cachefile>.meta` containing JSON-serialized headers
+- Cache hits serve directly from disk without origin requests
+- Cache misses download to temporary files with atomic rename
+- Request deduplication ensures only one download per URL occurs simultaneously
+- SemaphoreSlim limits maximum concurrent downloads
+
+## Development Commands
+
+### Building and Testing
 ```bash
-# Add your URLs (one per line, # for comments)
-https://your-api.com/endpoint
-https://your-cdn.com/large-file.json
+# Build the entire solution
+dotnet build
+
+# Run all tests
+dotnet test
+
+# Run tests with detailed output
+dotnet test --verbosity normal
+
+# Run specific test class
+dotnet test --filter "FullyQualifiedName~MediaCacheServiceTests"
 ```
 
-### Modifying Test Parameters
-Edit the script variables at the top of each file:
+### Running the Application
 ```bash
-# In concurrency-test.sh
-CONCURRENT_REQUESTS=20  # Test with more concurrent requests
+# Run the main application (development)
+dotnet run --project CachingProxyMiddleware
 
-# In load-test.sh  
-DEFAULT_REQUESTS=500    # Default total requests
-DEFAULT_CONCURRENT=10   # Default concurrency
+# Run with specific configuration
+dotnet run --project CachingProxyMiddleware --environment Development
 ```
 
-### Custom Reporting
-The load test saves detailed results to CSV files with format:
-```
-request_id,http_code,size_bytes,time_seconds,url
-1,200,1234,0.123,https://httpbin.org/json
-2,200,5678,0.045,https://httpbin.org/uuid
+### Cache Management
+```bash
+# Clear NuGet cache if needed
+dotnet nuget locals all --clear
+
+# Clean build artifacts
+dotnet clean
 ```
 
-You can analyze these with spreadsheet software or custom scripts.
+## Dependencies
+
+- **.NET 9.0**: Target framework
+- **CSharpFunctionalExtensions 3.6.0**: Result pattern and functional programming utilities
+- **Microsoft.Extensions.Options.ConfigurationExtensions 8.0.0**: Configuration binding
+- **Microsoft.CodeAnalysis.Analyzers 3.3.4**: Static code analysis
+
+### Test Dependencies
+- **Microsoft.NET.Test.Sdk 17.10.0**: Test SDK
+- **MSTest 3.4.3**: Test framework
+- **NSubstitute 5.1.0**: Mocking framework
+- **Microsoft.AspNetCore.Mvc.Testing 8.0.0**: Integration testing
+- **RichardSzalay.MockHttp 7.0.0**: HTTP client mocking
+- **coverlet.collector 6.0.2**: Code coverage
+
+## Key Implementation Details
+
+- Uses atomic file operations to prevent cache corruption during concurrent access
+- Request deduplication prevents multiple downloads of the same resource
+- Stream disposal handled carefully to avoid "closed stream" exceptions
+- Content-Type headers include charset parameters when provided by origin
+- Error handling includes cleanup of partial cache files on failures
+- All logging uses structured logging with ILogger<T>
+- HTTP status code validation ensures only successful responses are cached
+
+## API Endpoints
+
+- `GET /proxy?url=<media-url>` - Proxy and cache media via API endpoint
+- `GET /media?url=<media-url>` - Proxy and cache media via middleware
+- `POST /cache/clear` - Clear all cached media
+- `GET /cache/size` - Get total cache size in bytes
+- `GET /health` - Health check endpoint
+- `GET /` - Service information and available endpoints
